@@ -1,5 +1,15 @@
 # @acodera/shopify-admin-mcp
 
+## 1.1.0
+
+### Minor Changes
+
+- [#5](https://github.com/acoderacom/shopify-admin-mcp/pull/5) [`82e29cd`](https://github.com/acoderacom/shopify-admin-mcp/commit/82e29cd0bdd28a01f7f56e84da51b918f01a022f) Thanks [@acoderacom](https://github.com/acoderacom)! - Add a `discounts` toolset: list and get discounts; create amount-off (percentage or fixed, on the order or specific products/collections), free shipping, and buy X get Y discounts as codes or automatic discounts, with dates, minimums, usage limits, combinations, and customer/segment/market eligibility; activate, deactivate, and delete them; and add extra codes in bulk.
+
+### Patch Changes
+
+- [#5](https://github.com/acoderacom/shopify-admin-mcp/pull/5) [`921d690`](https://github.com/acoderacom/shopify-admin-mcp/commit/921d690e3f2cf3226e2c45c0ac69077699bdf61d) Thanks [@acoderacom](https://github.com/acoderacom)! - Document every option in the README: a flag-to-environment-variable table with defaults, complete examples using all flags and all environment variables, and which one wins when both are set.
+
 ## 1.0.1
 
 ### Patch Changes

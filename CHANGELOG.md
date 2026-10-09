@@ -1,5 +1,13 @@
 # @acodera/shopify-admin-mcp
 
+## 1.1.1
+
+### Patch Changes
+
+- [#7](https://github.com/acoderacom/shopify-admin-mcp/pull/7) [`04f9a39`](https://github.com/acoderacom/shopify-admin-mcp/commit/04f9a39f77ffc3e207e355f758a5141dfe1f127b) Thanks [@acoderacom](https://github.com/acoderacom)! - Treat blank values and unfilled `${VAR}` / `$VAR` references as not set for every option, so a config can list both an access token and client credentials and use whichever is filled in (previously a literal `${SHOPIFY_ACCESS_TOKEN}` was sent as the token). The startup log now names the authentication method, and incomplete client credentials report which value is missing.
+
+- [#7](https://github.com/acoderacom/shopify-admin-mcp/pull/7) [`c062f3a`](https://github.com/acoderacom/shopify-admin-mcp/commit/c062f3a022a7da493b46dee9b9eca8c1835bd980) Thanks [@acoderacom](https://github.com/acoderacom)! - Upgrade `graphql` (used to parse raw GraphQL in read-only mode) from 16 to 17. No behavior change: mutations and subscriptions are still detected and blocked the same way.
+
 ## 1.1.0
 
 ### Minor Changes

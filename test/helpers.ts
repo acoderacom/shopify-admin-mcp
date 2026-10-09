@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { GraphQLClient, GraphQLResponse } from "../src/graphql/client.js";
-import { SchemaIndex } from "../src/graphql/schema-index.js";
+import { SchemaIndex, type SchemaIndexLoader } from "../src/graphql/schema-index.js";
 import { createServer, type ServerOptions } from "../src/server.js";
 
 export interface RecordedCall {
@@ -31,7 +31,7 @@ export class FakeGraphQLClient {
   }
 }
 
-const schemaIndex = new SchemaIndex({
+export const schemaIndex = new SchemaIndex({
   queryTypeName: "QueryRoot",
   mutationTypeName: "Mutation",
   types: [
@@ -83,9 +83,12 @@ const schemaIndex = new SchemaIndex({
 });
 
 /** Connects a real MCP client to the server over an in-memory transport. */
-export async function connect(options: Partial<ServerOptions> = {}) {
+export async function connect(
+  options: Partial<ServerOptions> = {},
+  loadSchemaIndex: SchemaIndexLoader = async () => schemaIndex
+) {
   const fake = new FakeGraphQLClient();
-  const server = createServer(fake as unknown as GraphQLClient, schemaIndex, {
+  const server = createServer(fake as unknown as GraphQLClient, loadSchemaIndex, {
     readOnly: false,
     ...options,
   });

@@ -29,6 +29,7 @@ export function registerInventoryTools(
                 }
                 location { id name }
               }
+              pageInfo { hasNextPage }
             }
           }
         }`,

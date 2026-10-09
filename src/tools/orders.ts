@@ -30,6 +30,7 @@ export function registerOrderTools(
                 customer { id displayName defaultEmailAddress { emailAddress } }
                 lineItems(first: 5) {
                   nodes { title quantity }
+                  pageInfo { hasNextPage }
                 }
                 createdAt
               }
@@ -69,11 +70,13 @@ export function registerOrderTools(
                 originalTotalSet { shopMoney { amount currencyCode } }
                 variant { id title }
               }
+              pageInfo { hasNextPage }
             }
             fulfillments { status trackingInfo { number url } }
             tags note
             metafields(first: 10) {
               nodes { namespace key value type }
+              pageInfo { hasNextPage }
             }
             createdAt updatedAt
           }

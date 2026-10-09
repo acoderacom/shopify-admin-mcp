@@ -20,6 +20,8 @@ interface QueryCost {
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const MAX_THROTTLE_RETRIES = 3;
+// A 429 asking for a longer wait than this is reported rather than waited out
+const MAX_RETRY_AFTER_MS = 60_000;
 
 function isThrottled(res: GraphQLResponse): boolean {
   return res.errors?.some((e) => e.extensions?.code === "THROTTLED") ?? false;
@@ -34,6 +36,15 @@ function throttleDelayMs(res: GraphQLResponse, attempt: number): number {
     return Math.max(1000, Math.ceil((deficit / status.restoreRate) * 1000));
   }
   return 1000 * (attempt + 1);
+}
+
+// Retry-After is seconds (Shopify sends e.g. "2.0") or an HTTP date
+function retryAfterMs(res: Response): number | null {
+  const header = res.headers.get("retry-after")?.trim();
+  if (!header) return null;
+  const seconds = Number(header);
+  const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(header) - Date.now();
+  return Number.isFinite(ms) ? Math.max(0, Math.ceil(ms)) : null;
 }
 
 export class GraphQLClient {
@@ -61,14 +72,20 @@ export class GraphQLClient {
       let res = await this.post(body, await this.auth.getAccessToken());
 
       if (res.status === 401 && this.auth.canRefresh) {
+        // Release the rejected response's connection before retrying
+        await res.body?.cancel();
         res = await this.post(body, await this.auth.forceRefresh());
       }
 
       this.checkServedVersion(res);
 
       if (res.status === 429 && attempt < MAX_THROTTLE_RETRIES) {
-        await sleep(1000 * (attempt + 1));
-        continue;
+        const delay = retryAfterMs(res) ?? 1000 * (attempt + 1);
+        if (delay <= MAX_RETRY_AFTER_MS) {
+          await res.body?.cancel();
+          await sleep(delay);
+          continue;
+        }
       }
 
       if (!res.ok) {

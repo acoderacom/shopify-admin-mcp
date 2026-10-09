@@ -5,13 +5,48 @@ import type {
   IntrospectedTypeRef,
 } from "./introspection.js";
 
+// Type details longer than this shorten their descriptions to keep the response readable
+const MAX_DETAILS_LENGTH = 20_000;
+
+type DescriptionStyle = "full" | "short" | "none";
+
+// First sentence of a description, capped so one long sentence can't dominate
+function shorten(description: string): string {
+  const sentence = description.split(/(?<=\.)\s/)[0] ?? description;
+  return sentence.length > 160 ? `${sentence.slice(0, 157)}...` : sentence;
+}
+
+export type SchemaIndexLoader = () => Promise<SchemaIndex>;
+
+/**
+ * Builds the index on first use and shares it between callers. A failed load isn't cached,
+ * so the next call tries again.
+ */
+export function lazySchemaIndex(load: () => Promise<IntrospectedSchema>): SchemaIndexLoader {
+  let pending: Promise<SchemaIndex> | null = null;
+  return () => {
+    pending ??= load()
+      .then((schema) => new SchemaIndex(schema))
+      .catch((err: unknown) => {
+        pending = null;
+        throw err;
+      });
+    return pending;
+  };
+}
+
 export class SchemaIndex {
   private typeMap: Map<string, IntrospectedType> = new Map();
   private queryFields: Map<string, IntrospectedField> = new Map();
   private mutationFields: Map<string, IntrospectedField> = new Map();
   private allNames: string[] = [];
+  private queryTypeName: string;
+  private mutationTypeName: string;
 
   constructor(schema: IntrospectedSchema) {
+    this.queryTypeName = schema.queryTypeName;
+    this.mutationTypeName = schema.mutationTypeName;
+
     for (const type of schema.types) {
       if (type.name.startsWith("__")) continue;
       this.typeMap.set(type.name, type);
@@ -113,8 +148,18 @@ export class SchemaIndex {
   }
 
   getDetails(name: string): string | null {
+    // The root types hold every query or mutation, far too many to describe in one response
+    if (name === this.queryTypeName) return this.formatRootType(name, "queries", this.queryFields);
+    if (name === this.mutationTypeName) return this.formatRootType(name, "mutations", this.mutationFields);
+
     const type = this.typeMap.get(name);
-    if (type) return this.formatType(type);
+    if (type) {
+      for (const style of ["full", "short"] as const) {
+        const details = this.formatType(type, style);
+        if (details.length <= MAX_DETAILS_LENGTH) return details;
+      }
+      return `${this.formatType(type, "none")}\n\n(Descriptions omitted because ${name} has too many members to describe in one response.)`;
+    }
 
     const query = this.queryFields.get(name);
     if (query) return this.formatFieldDetails("Query", name, query);
@@ -125,7 +170,25 @@ export class SchemaIndex {
     return null;
   }
 
-  private formatType(type: IntrospectedType): string {
+  private formatRootType(
+    name: string,
+    category: string,
+    fields: Map<string, IntrospectedField>
+  ): string {
+    return [
+      `# ${name} (${fields.size} ${category})`,
+      "",
+      `Call shopify_schema_details with one of these names for its arguments and return type, or use shopify_schema_search to narrow them down:`,
+      "",
+      Array.from(fields.keys()).sort().join(", "),
+    ].join("\n");
+  }
+
+  private formatType(type: IntrospectedType, style: DescriptionStyle): string {
+    const describe = (description: string | null) => {
+      if (!description || style === "none") return "";
+      return ` — ${style === "short" ? shorten(description) : description}`;
+    };
     const lines: string[] = [];
     lines.push(`# ${type.name} (${type.kind})`);
     if (type.description) lines.push(`\n${type.description}`);
@@ -139,15 +202,14 @@ export class SchemaIndex {
     if (type.fields && type.fields.length > 0) {
       lines.push("\n## Fields\n");
       for (const field of type.fields) {
-        const desc = field.description ? ` — ${field.description}` : "";
-        lines.push(`- ${this.formatFieldSummary(field)}${desc}`);
+        lines.push(`- ${this.formatFieldSummary(field)}${describe(field.description)}`);
       }
     }
 
     if (type.inputFields && type.inputFields.length > 0) {
       lines.push("\n## Input Fields\n");
       for (const field of type.inputFields) {
-        const desc = field.description ? ` — ${field.description}` : "";
+        const desc = describe(field.description);
         const def =
           field.defaultValue != null ? ` (default: ${field.defaultValue})` : "";
         lines.push(
@@ -159,8 +221,7 @@ export class SchemaIndex {
     if (type.enumValues && type.enumValues.length > 0) {
       lines.push("\n## Enum Values\n");
       for (const val of type.enumValues) {
-        const desc = val.description ? ` — ${val.description}` : "";
-        lines.push(`- ${val.name}${desc}`);
+        lines.push(`- ${val.name}${describe(val.description)}`);
       }
     }
 

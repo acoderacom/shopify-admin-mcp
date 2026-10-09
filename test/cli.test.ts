@@ -12,6 +12,7 @@ const ENV_KEYS = [
   "SHOPIFY_TOOLSETS",
   "SHOPIFY_UPLOAD_DIR",
   "SHOPIFY_ALLOW_LIVE_THEME_WRITES",
+  "SHOPIFY_DISABLE_RAW_GRAPHQL",
 ];
 
 const parse = (...args: string[]) => parseArgs(["node", "shopify-admin-mcp", ...args]);
@@ -38,6 +39,7 @@ describe("parseArgs", () => {
       apiVersion: "2026-10",
       readOnly: false,
       allowLiveThemeWrites: false,
+      disableRawGraphql: false,
       auth: { mode: "access-token", accessToken: "shpat_x" },
     });
   });
@@ -82,6 +84,7 @@ describe("parseArgs", () => {
       apiVersion: "2026-07",
       readOnly: true,
       allowLiveThemeWrites: false,
+      disableRawGraphql: false,
       auth: { mode: "client-credentials", clientId: "id", clientSecret: "secret" },
     });
     expect(console.error).not.toHaveBeenCalled();
@@ -120,6 +123,12 @@ describe("parseArgs", () => {
     vi.stubEnv("SHOPIFY_ALLOW_LIVE_THEME_WRITES", "1");
     const config = parse("--store", "s", "--access-token", "t");
     expect(config).toMatchObject({ toolsets: ["files"], uploadDir: "/tmp/uploads", allowLiveThemeWrites: true });
+  });
+
+  it("disables raw GraphQL with --disable-raw-graphql or SHOPIFY_DISABLE_RAW_GRAPHQL", () => {
+    expect(parse("--store", "s", "--access-token", "t", "--disable-raw-graphql").disableRawGraphql).toBe(true);
+    vi.stubEnv("SHOPIFY_DISABLE_RAW_GRAPHQL", "true");
+    expect(parse("--store", "s", "--access-token", "t").disableRawGraphql).toBe(true);
   });
 
   it("rejects unknown toolsets", () => {

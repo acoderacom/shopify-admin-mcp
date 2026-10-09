@@ -14,7 +14,10 @@ const productFields = {
   vendor: z.string().optional().describe("Product vendor"),
   productType: z.string().optional().describe("Product type"),
   tags: z.array(z.string()).optional().describe("Product tags"),
-  status: z.enum(["ACTIVE", "DRAFT", "ARCHIVED"]).optional().describe("Product status"),
+  status: z
+    .enum(["ACTIVE", "DRAFT", "ARCHIVED", "UNLISTED"])
+    .optional()
+    .describe("Product status. UNLISTED products are active but only reachable by direct link"),
 };
 
 const variantFields = {
@@ -75,7 +78,8 @@ export function registerProductTools(
   server.registerTool(
     "shopify_product_get",
     {
-      description: "Get a single product by ID",
+      description:
+        "Get a single product by ID, with its first 50 variants (variantsCount gives the total) and first 20 metafields",
       inputSchema: {
         id: z.string().describe("Product GID (e.g. gid://shopify/Product/123)"),
       },
@@ -89,11 +93,14 @@ export function registerProductTools(
             totalInventory
             priceRangeV2 { minVariantPrice { amount currencyCode } maxVariantPrice { amount currencyCode } }
             featuredMedia { preview { image { url altText } } }
+            variantsCount { count }
             variants(first: 50) {
               nodes { id title price sku inventoryQuantity selectedOptions { name value } }
+              pageInfo { hasNextPage }
             }
             metafields(first: 20) {
               nodes { namespace key value type }
+              pageInfo { hasNextPage }
             }
             createdAt updatedAt
           }

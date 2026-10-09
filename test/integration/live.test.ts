@@ -34,7 +34,7 @@ async function connectLive(readOnly: boolean, options: Partial<ServerOptions> = 
   const config = { ...parseArgs(["node", "shopify-admin-mcp"]), readOnly, ...options };
   const graphql = new GraphQLClient(new AuthProvider(config), config);
   const schema = await runIntrospection(graphql);
-  const server = createServer(graphql, new SchemaIndex(schema), config);
+  const server = createServer(graphql, async () => new SchemaIndex(schema), config);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "live-test", version: "0.0.0" });
@@ -551,8 +551,10 @@ describe.skipIf(!writesEnabled)("live store: themes", { timeout: 300_000 }, () =
     expect(upserted.themeFilesUpsert.upsertedThemeFiles).toEqual([{ filename }]);
 
     const body = await eventually(async () => {
-      const got = await data(client, "shopify_theme_files_get", { themeId: copyId, filenames: [filename] });
-      const file = got.theme.files.nodes[0];
+      // The file reports an error until Shopify's upsert job has written it
+      const got = await callTool(client, "shopify_theme_files_get", { themeId: copyId, filenames: [filename] });
+      if (got.isError) return undefined;
+      const file = JSON.parse(resultText(got)).data.theme.files.nodes[0];
       return file?.body.content === content ? file.body.content : undefined;
     }, 10, 1000);
     expect(body).toBe(content);
@@ -565,6 +567,16 @@ describe.skipIf(!writesEnabled)("live store: themes", { timeout: 300_000 }, () =
     const result = await callTool(client, "shopify_theme_files_upsert", {
       themeId: mainThemeId,
       files: [{ filename: "snippets/mcp-test.liquid", content: "x" }],
+    });
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain("live theme");
+  });
+
+  it("refuses raw GraphQL writes to the live theme", async () => {
+    const result = await callTool(client, "shopify_graphql", {
+      query:
+        "mutation ($themeId: ID!) { themeFilesUpsert(themeId: $themeId, files: [{ filename: \"snippets/mcp-test.liquid\", body: { type: TEXT, value: \"x\" } }]) { userErrors { message } } }",
+      variables: { themeId: mainThemeId },
     });
     expect(result.isError).toBe(true);
     expect(resultText(result)).toContain("live theme");

@@ -109,9 +109,11 @@ async function stageLocalFile(
     }
   );
   const payload = staged.data?.stagedUploadsCreate as
-    | { stagedTargets: StagedTarget[]; userErrors: unknown[] }
+    | { stagedTargets: StagedTarget[] | null; userErrors: unknown[] }
+    | null
     | undefined;
-  const target = payload?.stagedTargets[0];
+  // stagedTargets is null when Shopify rejects the input; the userErrors explain why
+  const target = payload?.stagedTargets?.[0];
   if (!target || payload.userErrors.length > 0) return { failed: staged };
 
   const form = new FormData();

@@ -1,13 +1,13 @@
 import { z } from "zod";
-import type { SchemaIndex } from "../graphql/schema-index.js";
+import type { SchemaIndexLoader } from "../graphql/schema-index.js";
 import { READ_ONLY, type ToolRegistrar } from "./shared.js";
 
-// Schema tools read the cached introspection result and never call Shopify
+// Schema tools read the cached introspection result; Shopify is only called to load it once
 const SCHEMA_ANNOTATIONS = { ...READ_ONLY, openWorldHint: false };
 
 export function registerSchemaSearch(
   server: ToolRegistrar,
-  schemaIndex: SchemaIndex
+  loadSchemaIndex: SchemaIndexLoader
 ) {
   server.registerTool(
     "shopify_schema_search",
@@ -17,6 +17,8 @@ export function registerSchemaSearch(
       inputSchema: {
         query: z
           .string()
+          .trim()
+          .min(1)
           .describe('Search keyword (e.g. "metaobject", "product", "collection")'),
         filter: z
           .enum(["all", "types", "queries", "mutations"])
@@ -26,6 +28,7 @@ export function registerSchemaSearch(
       annotations: SCHEMA_ANNOTATIONS,
     },
     async ({ query, filter }) => {
+      const schemaIndex = await loadSchemaIndex();
       const results = schemaIndex.search(query, filter ?? "all");
       const lines: string[] = [];
 
@@ -86,7 +89,7 @@ export function registerSchemaSearch(
       annotations: SCHEMA_ANNOTATIONS,
     },
     async ({ name }) => {
-      const details = schemaIndex.getDetails(name);
+      const details = (await loadSchemaIndex()).getDetails(name);
       if (!details) {
         return {
           content: [

@@ -69,12 +69,15 @@ export function registerCustomerTools(
             tags note
             addressesV2(first: 10) {
               nodes { address1 address2 city province country zip }
+              pageInfo { hasNextPage }
             }
             orders(first: 10) {
               nodes { id name totalPriceSet { shopMoney { amount currencyCode } } createdAt }
+              pageInfo { hasNextPage }
             }
             metafields(first: 10) {
               nodes { namespace key value type }
+              pageInfo { hasNextPage }
             }
             createdAt updatedAt
           }

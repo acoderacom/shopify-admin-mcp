@@ -417,9 +417,43 @@ A theme editor that may change the live theme:
 "args": ["-y", "@acodera/shopify-admin-mcp", "--toolsets", "themes,files", "--allow-live-theme-writes"]
 ```
 
+Every flag at once, with client credentials:
+
+```json
+"args": [
+  "-y", "@acodera/shopify-admin-mcp",
+  "--store", "mystore.myshopify.com",
+  "--client-id", "your_client_id",
+  "--client-secret", "your_client_secret",
+  "--api-version", "2026-10",
+  "--toolsets", "products,collections,publishing,metafields,metaobjects,customers,orders,inventory,files,themes,markets",
+  "--upload-dir", "/Users/you/shopify-uploads",
+  "--allow-live-theme-writes",
+  "--read-only"
+]
+```
+
+`--read-only` hides every write tool, so in practice you wouldn't combine it with `--upload-dir` or `--allow-live-theme-writes`; they're shown together here only for the syntax.
+
+For a legacy token, use `"--access-token", "shpat_xxxxx"` instead of `--client-id` and `--client-secret`. Prefer passing credentials through `env` instead: the server warns when secrets are passed as flags, because flags are visible to other processes on the machine.
+
 ### As environment variables
 
-Every flag also has an environment variable, which you can put in `env` instead of `args`:
+Every flag has an environment variable, which you can put in `env` instead of `args`:
+
+| Flag | Environment variable | Value | Default |
+|------|----------------------|-------|---------|
+| `--store` | `SHOPIFY_STORE` | `mystore` or `mystore.myshopify.com` | required |
+| `--client-id` | `SHOPIFY_CLIENT_ID` | OAuth client ID | none |
+| `--client-secret` | `SHOPIFY_CLIENT_SECRET` | OAuth client secret | none |
+| `--access-token` | `SHOPIFY_ACCESS_TOKEN` | Legacy `shpat_...` token | none |
+| `--api-version` | `SHOPIFY_API_VERSION` | `YYYY-MM` or `unstable` | `2026-10` |
+| `--toolsets` | `SHOPIFY_TOOLSETS` | Comma-separated toolsets | all toolsets |
+| `--upload-dir` | `SHOPIFY_UPLOAD_DIR` | Absolute folder path | local uploads disabled |
+| `--read-only` | `SHOPIFY_READ_ONLY` | `true` or `1` turns it on | off |
+| `--allow-live-theme-writes` | `SHOPIFY_ALLOW_LIVE_THEME_WRITES` | `true` or `1` turns it on | off |
+
+Every variable at once, with client credentials:
 
 ```json
 {
@@ -431,14 +465,24 @@ Every flag also has an environment variable, which you can put in `env` instead 
         "SHOPIFY_STORE": "mystore.myshopify.com",
         "SHOPIFY_CLIENT_ID": "${SHOPIFY_CLIENT_ID}",
         "SHOPIFY_CLIENT_SECRET": "${SHOPIFY_CLIENT_SECRET}",
-        "SHOPIFY_TOOLSETS": "products,collections,publishing,files",
+        "SHOPIFY_API_VERSION": "2026-10",
+        "SHOPIFY_TOOLSETS": "products,collections,publishing,metafields,metaobjects,customers,orders,inventory,files,themes,markets",
         "SHOPIFY_UPLOAD_DIR": "/Users/you/shopify-uploads",
-        "SHOPIFY_READ_ONLY": "false"
+        "SHOPIFY_READ_ONLY": "false",
+        "SHOPIFY_ALLOW_LIVE_THEME_WRITES": "false"
       }
     }
   }
 }
 ```
+
+For a legacy token, replace `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET` with `"SHOPIFY_ACCESS_TOKEN": "${SHOPIFY_ACCESS_TOKEN}"`. The `${VAR}` references work in Claude Code's `.mcp.json`; in the Claude Desktop config, write the values directly.
+
+If you set the same option both ways:
+
+- For options that take a value (`--store`, credentials, `--api-version`, `--toolsets`, `--upload-dir`), the flag wins.
+- For on/off options (`--read-only`, `--allow-live-theme-writes`), either one turns it on. Setting the variable to `"false"` doesn't turn off a flag that's present.
+- If both an access token and client credentials are set, the access token is used.
 
 Use an absolute path for `--upload-dir`, because MCP clients start the server from their own working directory, not your project's.
 

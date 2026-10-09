@@ -272,6 +272,18 @@ The store must be a `*.myshopify.com` domain, so credentials are only ever sent 
 
 ## Usage with Claude Code
 
+With OAuth client credentials (Dev Dashboard app):
+
+```bash
+claude mcp add shopify \
+  -e SHOPIFY_STORE=mystore.myshopify.com \
+  -e SHOPIFY_CLIENT_ID=your_client_id \
+  -e SHOPIFY_CLIENT_SECRET=your_client_secret \
+  -- npx -y @acodera/shopify-admin-mcp
+```
+
+With a legacy access token:
+
 ```bash
 claude mcp add shopify \
   -e SHOPIFY_STORE=mystore.myshopify.com \
@@ -279,7 +291,7 @@ claude mcp add shopify \
   -- npx -y @acodera/shopify-admin-mcp
 ```
 
-Or add it to your project's `.mcp.json`:
+Or add it to your project's `.mcp.json`. Claude Code expands `${VAR}` from your shell environment, so the file can be committed without secrets. With client credentials:
 
 ```json
 {
@@ -289,18 +301,54 @@ Or add it to your project's `.mcp.json`:
       "args": ["-y", "@acodera/shopify-admin-mcp"],
       "env": {
         "SHOPIFY_STORE": "mystore.myshopify.com",
-        "SHOPIFY_ACCESS_TOKEN": "shpat_xxxxx"
+        "SHOPIFY_CLIENT_ID": "${SHOPIFY_CLIENT_ID}",
+        "SHOPIFY_CLIENT_SECRET": "${SHOPIFY_CLIENT_SECRET}"
       }
     }
   }
 }
 ```
 
-Don't commit real tokens. Claude Code expands `${VAR}` in `.mcp.json`, so you can reference variables from your shell instead.
+With a legacy access token:
+
+```json
+{
+  "mcpServers": {
+    "shopify": {
+      "command": "npx",
+      "args": ["-y", "@acodera/shopify-admin-mcp"],
+      "env": {
+        "SHOPIFY_STORE": "mystore.myshopify.com",
+        "SHOPIFY_ACCESS_TOKEN": "${SHOPIFY_ACCESS_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Add flags such as `--read-only`, `--toolsets products,collections`, or `--upload-dir ./uploads` after the package name in `args`.
 
 ## Usage with Claude Desktop
 
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`). With client credentials:
+
+```json
+{
+  "mcpServers": {
+    "shopify": {
+      "command": "npx",
+      "args": ["-y", "@acodera/shopify-admin-mcp"],
+      "env": {
+        "SHOPIFY_STORE": "mystore.myshopify.com",
+        "SHOPIFY_CLIENT_ID": "your_client_id",
+        "SHOPIFY_CLIENT_SECRET": "your_client_secret"
+      }
+    }
+  }
+}
+```
+
+With a legacy access token:
 
 ```json
 {

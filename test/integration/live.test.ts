@@ -625,3 +625,111 @@ describe.skipIf(!writesEnabled)("live store: markets", { timeout: TIMEOUT }, () 
     marketId = undefined;
   });
 });
+
+describe.skipIf(!writesEnabled)("live store: discounts", { timeout: TIMEOUT }, () => {
+  const stamp = Date.now();
+  // A year out, so none of these discounts can apply to real carts while the tests run
+  const startsAt = new Date(stamp + 365 * 24 * 60 * 60 * 1000).toISOString();
+  const created: string[] = [];
+  let client: Client;
+  let productId: string;
+  let collectionId: string;
+
+  beforeAll(async () => {
+    ({ client } = await connectLive(false));
+    const d = await graphql(client, "{ products(first: 1) { nodes { id } } collections(first: 1) { nodes { id } } }");
+    productId = d.products.nodes[0].id;
+    collectionId = d.collections.nodes[0].id;
+  }, TIMEOUT);
+
+  afterAll(async () => {
+    for (const id of created) await callTool(client, "shopify_discount_delete", { id });
+    await client?.close();
+  }, TIMEOUT);
+
+  const create = async (tool: string, args: Record<string, unknown>) => {
+    const d = await data(client, tool, { startsAt, ...args });
+    const payload = Object.values(d)[0] as Data;
+    const node = payload.codeDiscountNode ?? payload.automaticDiscountNode;
+    created.push(node.id);
+    return { id: node.id as string, discount: (node.codeDiscount ?? node.automaticDiscount) as Data };
+  };
+
+  it("creates amount-off, free shipping, and buy X get Y discounts as codes and automatic", async () => {
+    const percent = await create("shopify_discount_amount_off_create", {
+      method: "code", title: `[MCP test] percent ${stamp}`, code: `MCPTEST${stamp}`, percentOff: 10,
+      minimumSubtotal: "50000", usageLimit: 5, appliesOncePerCustomer: true,
+    });
+    expect(percent.discount).toMatchObject({ __typename: "DiscountCodeBasic", status: "SCHEDULED", usageLimit: 5 });
+    expect(percent.discount.codes.nodes).toEqual([{ code: `MCPTEST${stamp}` }]);
+
+    const fixed = await create("shopify_discount_amount_off_create", {
+      method: "automatic", title: `[MCP test] fixed ${stamp}`, amountOff: "5000", collectionIds: [collectionId], minimumQuantity: 2,
+    });
+    expect(fixed.discount).toMatchObject({ __typename: "DiscountAutomaticBasic", status: "SCHEDULED" });
+
+    const shipping = await create("shopify_discount_free_shipping_create", {
+      method: "code", title: `[MCP test] ship ${stamp}`, code: `MCPSHIP${stamp}`, countryCodes: ["ID"], maximumShippingPrice: "20000",
+    });
+    expect(shipping.discount.__typename).toBe("DiscountCodeFreeShipping");
+
+    const autoShipping = await create("shopify_discount_free_shipping_create", {
+      method: "automatic", title: `[MCP test] auto ship ${stamp}`, minimumSubtotal: "100000",
+    });
+    expect(autoShipping.discount.__typename).toBe("DiscountAutomaticFreeShipping");
+
+    const bogo = await create("shopify_discount_bxgy_create", {
+      method: "code", title: `[MCP test] bogo ${stamp}`, code: `MCPBOGO${stamp}`,
+      buys: { quantity: 2, productIds: [productId] }, gets: { quantity: 1, productIds: [productId] }, usesPerOrderLimit: 1,
+    });
+    expect(bogo.discount.__typename).toBe("DiscountCodeBxgy");
+
+    const autoBogo = await create("shopify_discount_bxgy_create", {
+      method: "automatic", title: `[MCP test] auto bogo ${stamp}`,
+      buys: { amount: "100000", collectionIds: [collectionId] },
+      gets: { quantity: 1, productIds: [productId], percentOff: 50 }, usesPerOrderLimit: 2,
+    });
+    expect(autoBogo.discount.__typename).toBe("DiscountAutomaticBxgy");
+  });
+
+  it("lists and gets the new discounts", async () => {
+    const listed = await data(client, "shopify_discounts_list", { first: 20 });
+    const ids = listed.discountNodes.nodes.map((n: Data) => n.id);
+    for (const id of created) expect(ids).toContain(id);
+
+    const got = await data(client, "shopify_discount_get", { id: created[0] });
+    expect(got.discountNode.discount.summary).toBeTruthy();
+  });
+
+  it("adds codes to a code discount", async () => {
+    const d = await data(client, "shopify_discount_codes_add", {
+      discountId: created[0],
+      codes: [`MCPTEST${stamp}A`, `MCPTEST${stamp}B`],
+    });
+    expect(d.discountRedeemCodeBulkAdd.bulkCreation.codesCount).toBe(2);
+
+    const count = await eventually(async () => {
+      const got = await data(client, "shopify_discount_get", { id: created[0] });
+      const n = got.discountNode.discount.codesCount.count;
+      return n === 3 ? n : undefined;
+    }, 15, 2000);
+    expect(count).toBe(3);
+  });
+
+  it("activates and deactivates a code discount", async () => {
+    const activated = await data(client, "shopify_discount_activate", { id: created[0] });
+    expect(activated.discountCodeActivate.codeDiscountNode.codeDiscount.status).toBe("ACTIVE");
+
+    const deactivated = await data(client, "shopify_discount_deactivate", { id: created[0] });
+    expect(deactivated.discountCodeDeactivate.codeDiscountNode.codeDiscount.status).toBe("EXPIRED");
+  });
+
+  it("deletes code and automatic discounts", async () => {
+    while (created.length > 0) {
+      const id = created.pop()!;
+      const d = await data(client, "shopify_discount_delete", { id });
+      const deletedId = d.discountCodeDelete?.deletedCodeDiscountId ?? d.discountAutomaticDelete?.deletedAutomaticDiscountId;
+      expect(deletedId).toBe(id);
+    }
+  });
+});

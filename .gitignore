@@ -4,3 +4,7 @@ dist/
 .DS_Store
 
 *.log
+
+# Local MCP test setup (contains store credentials)
+.mcp.json
+uploads/

@@ -231,6 +231,69 @@ const toolCalls: Array<{
     },
   },
   { tool: "shopify_market_delete", args: { id: "gid://shopify/Market/1" }, field: "marketDelete(", variables: { id: "gid://shopify/Market/1" } },
+  { tool: "shopify_discounts_list", args: { query: "status:active" }, field: "discountNodes(", variables: { first: 20, query: "status:active" } },
+  { tool: "shopify_discount_get", args: { id: "gid://shopify/DiscountCodeNode/1" }, field: "discountNode(", variables: { id: "gid://shopify/DiscountCodeNode/1" } },
+  {
+    tool: "shopify_discount_amount_off_create",
+    args: { method: "code", title: "Spring", code: "SPRING20", percentOff: 20, startsAt: "2030-01-01T00:00:00Z" },
+    field: "discountCodeBasicCreate(basicCodeDiscount: $discount)",
+    variables: {
+      discount: {
+        title: "Spring",
+        code: "SPRING20",
+        startsAt: "2030-01-01T00:00:00Z",
+        context: { all: "ALL" },
+        customerGets: { value: { percentage: 0.2 }, items: { all: true } },
+      },
+    },
+  },
+  {
+    tool: "shopify_discount_free_shipping_create",
+    args: { method: "automatic", title: "Free shipping ID", countryCodes: ["ID"], startsAt: "2030-01-01T00:00:00Z" },
+    field: "discountAutomaticFreeShippingCreate(freeShippingAutomaticDiscount: $discount)",
+    variables: {
+      discount: {
+        title: "Free shipping ID",
+        startsAt: "2030-01-01T00:00:00Z",
+        context: { all: "ALL" },
+        destination: { countries: { add: ["ID"] } },
+      },
+    },
+  },
+  {
+    tool: "shopify_discount_bxgy_create",
+    args: {
+      method: "code",
+      title: "BOGO",
+      code: "BOGO",
+      startsAt: "2030-01-01T00:00:00Z",
+      buys: { quantity: 2, productIds: [PRODUCT] },
+      gets: { quantity: 1, collectionIds: ["gid://shopify/Collection/1"] },
+    },
+    field: "discountCodeBxgyCreate(bxgyCodeDiscount: $discount)",
+    variables: {
+      discount: {
+        title: "BOGO",
+        code: "BOGO",
+        startsAt: "2030-01-01T00:00:00Z",
+        context: { all: "ALL" },
+        customerBuys: { value: { quantity: "2" }, items: { products: { productsToAdd: [PRODUCT] } } },
+        customerGets: {
+          value: { discountOnQuantity: { quantity: "1", effect: { percentage: 1 } } },
+          items: { collections: { add: ["gid://shopify/Collection/1"] } },
+        },
+      },
+    },
+  },
+  { tool: "shopify_discount_activate", args: { id: "gid://shopify/DiscountCodeNode/1" }, field: "discountCodeActivate(", variables: { id: "gid://shopify/DiscountCodeNode/1" } },
+  { tool: "shopify_discount_deactivate", args: { id: "gid://shopify/DiscountAutomaticNode/1" }, field: "discountAutomaticDeactivate(", variables: { id: "gid://shopify/DiscountAutomaticNode/1" } },
+  { tool: "shopify_discount_delete", args: { id: "gid://shopify/DiscountCodeNode/1" }, field: "discountCodeDelete(", variables: { id: "gid://shopify/DiscountCodeNode/1" } },
+  {
+    tool: "shopify_discount_codes_add",
+    args: { discountId: "gid://shopify/DiscountCodeNode/1", codes: ["VIP1", "VIP2"] },
+    field: "discountRedeemCodeBulkAdd(",
+    variables: { discountId: "gid://shopify/DiscountCodeNode/1", codes: [{ code: "VIP1" }, { code: "VIP2" }] },
+  },
 ];
 
 // Multi-step tools with their own suites (themes.test.ts, files.test.ts)
@@ -242,9 +305,9 @@ describe("tool registry", () => {
     expect(client.getServerVersion()).toEqual({ name: "shopify-admin-mcp", version });
   });
 
-  it("registers 53 tools, each with behaviour annotations", async () => {
+  it("registers 62 tools, each with behaviour annotations", async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(53);
+    expect(tools).toHaveLength(62);
     for (const tool of tools) {
       expect(typeof tool.annotations?.readOnlyHint, tool.name).toBe("boolean");
     }
@@ -255,6 +318,7 @@ describe("tool registry", () => {
     const destructive = tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name);
     expect(destructive.sort()).toEqual([
       "shopify_collection_delete",
+      "shopify_discount_delete",
       "shopify_file_delete",
       "shopify_graphql",
       "shopify_market_delete",
@@ -354,6 +418,105 @@ describe("product options and collection sources", () => {
 
   it("rejects malformed market country codes", async () => {
     const result = await callTool(client, "shopify_market_create", { name: "X", countryCodes: ["sg"] });
+    expect(result.isError).toBe(true);
+    expect(fake.calls).toHaveLength(0);
+  });
+});
+
+describe("discounts", () => {
+  const base = { title: "Sale", startsAt: "2030-01-01T00:00:00Z" };
+
+  it("creates automatic amount-off discounts on collections with minimums and eligibility", async () => {
+    await callTool(client, "shopify_discount_amount_off_create", {
+      ...base,
+      method: "automatic",
+      amountOff: "10000",
+      amountOffEachItem: true,
+      collectionIds: ["gid://shopify/Collection/1"],
+      minimumQuantity: 2,
+      marketIds: ["gid://shopify/Market/1"],
+      combinesWith: { shippingDiscounts: true },
+    });
+
+    expect(fake.lastCall.query).toContain("discountAutomaticBasicCreate(");
+    expect(fake.lastCall.variables).toEqual({
+      discount: {
+        ...base,
+        combinesWith: { shippingDiscounts: true },
+        context: { markets: { add: ["gid://shopify/Market/1"] } },
+        minimumRequirement: { quantity: { greaterThanOrEqualToQuantity: "2" } },
+        customerGets: {
+          value: { discountAmount: { amount: "10000", appliesOnEachItem: true } },
+          items: { collections: { add: ["gid://shopify/Collection/1"] } },
+        },
+      },
+    });
+  });
+
+  it("defaults the start time to now", async () => {
+    const before = Date.now();
+    await callTool(client, "shopify_discount_amount_off_create", { method: "code", title: "Now", code: "NOW", percentOff: 5 });
+    const startsAt = Date.parse((fake.lastCall.variables!.discount as { startsAt: string }).startsAt);
+    expect(startsAt).toBeGreaterThanOrEqual(before - 1000);
+    expect(startsAt).toBeLessThanOrEqual(Date.now() + 1000);
+  });
+
+  it("sends usesPerOrderLimit as a string for automatic buy X get Y discounts", async () => {
+    await callTool(client, "shopify_discount_bxgy_create", {
+      ...base,
+      method: "automatic",
+      buys: { amount: "100000", productIds: [PRODUCT] },
+      gets: { quantity: 1, variantIds: ["gid://shopify/ProductVariant/1"], percentOff: 50 },
+      usesPerOrderLimit: 2,
+    });
+
+    const discount = fake.lastCall.variables!.discount as Record<string, unknown>;
+    expect(fake.lastCall.query).toContain("discountAutomaticBxgyCreate(");
+    expect(discount.usesPerOrderLimit).toBe("2");
+    expect(discount.customerBuys).toEqual({ value: { amount: "100000" }, items: { products: { productsToAdd: [PRODUCT] } } });
+    expect(discount.customerGets).toEqual({
+      value: { discountOnQuantity: { quantity: "1", effect: { percentage: 0.5 } } },
+      items: { products: { productVariantsToAdd: ["gid://shopify/ProductVariant/1"] } },
+    });
+  });
+
+  it.each([
+    ["a code discount without a code", "shopify_discount_amount_off_create", { method: "code", percentOff: 10 }, "code is required"],
+    ["an automatic discount with a code", "shopify_discount_amount_off_create", { method: "automatic", code: "X", percentOff: 10 }, "automatic discounts"],
+    ["both percentOff and amountOff", "shopify_discount_amount_off_create", { method: "code", code: "X", percentOff: 10, amountOff: "5" }, "exactly one of percentOff or amountOff"],
+    ["neither percentOff nor amountOff", "shopify_discount_amount_off_create", { method: "code", code: "X" }, "exactly one of percentOff or amountOff"],
+    ["two minimums", "shopify_discount_free_shipping_create", { method: "code", code: "X", minimumSubtotal: "1", minimumQuantity: 1 }, "at most one of minimumSubtotal"],
+    ["buy X get Y without items", "shopify_discount_bxgy_create", { method: "code", code: "X", buys: { quantity: 1 }, gets: { quantity: 1, productIds: [PRODUCT] } }, "need productIds"],
+    ["buy X get Y with quantity and amount", "shopify_discount_bxgy_create", { method: "code", code: "X", buys: { quantity: 1, amount: "5", productIds: [PRODUCT] }, gets: { quantity: 1, productIds: [PRODUCT] } }, "exactly one of quantity or amount"],
+  ])("rejects %s", async (_label, tool, args, message) => {
+    const result = await callTool(client, tool, { ...base, ...args });
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain(message);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it.each([0, 101])("rejects percentOff %d", async (percentOff) => {
+    const result = await callTool(client, "shopify_discount_amount_off_create", { ...base, method: "code", code: "X", percentOff });
+    expect(result.isError).toBe(true);
+  });
+
+  it.each([
+    ["shopify_discount_activate", "gid://shopify/DiscountAutomaticNode/1", "discountAutomaticActivate("],
+    ["shopify_discount_deactivate", "gid://shopify/DiscountCodeNode/1", "discountCodeDeactivate("],
+    ["shopify_discount_delete", "gid://shopify/DiscountAutomaticNode/1", "discountAutomaticDelete("],
+  ])("%s routes %s to %s", async (tool, id, field) => {
+    await callTool(client, tool, { id });
+    expect(fake.lastCall.query).toContain(field);
+  });
+
+  it("rejects IDs that aren't discount nodes", async () => {
+    const result = await callTool(client, "shopify_discount_delete", { id: "gid://shopify/DiscountCodeBasic/1" });
+    expect(result.isError).toBe(true);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("only adds codes to code discounts", async () => {
+    const result = await callTool(client, "shopify_discount_codes_add", { discountId: "gid://shopify/DiscountAutomaticNode/1", codes: ["A"] });
     expect(result.isError).toBe(true);
     expect(fake.calls).toHaveLength(0);
   });

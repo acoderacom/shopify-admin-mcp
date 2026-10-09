@@ -37,17 +37,30 @@ export const DEFAULT_API_VERSION = "2026-10";
 const STORE_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/;
 const API_VERSION_PATTERN = /^(\d{4}-(01|04|07|10)|unstable)$/;
 
+// A whole-value variable reference such as ${SHOPIFY_CLIENT_ID}, ${VAR:-default}, or $VAR
+const UNEXPANDED_VARIABLE = /^\$(\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)$/;
+
+// MCP clients that don't expand variables pass ${VAR} through literally, and unset
+// variables often arrive as empty strings. Treating both as "not provided" lets one
+// config carry both auth methods and use whichever is filled in.
+function provided(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || UNEXPANDED_VARIABLE.test(trimmed)) return undefined;
+  return trimmed;
+}
+
 function getArg(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
   if (idx === -1 || idx + 1 >= args.length) return undefined;
-  return args[idx + 1];
+  return provided(args[idx + 1]);
+}
+
+function getEnv(name: string): string | undefined {
+  return provided(process.env[name]);
 }
 
 function getFlag(args: string[], flag: string, envVar: string): boolean {
-  return (
-    args.includes(flag) ||
-    ["1", "true"].includes(process.env[envVar]?.toLowerCase() ?? "")
-  );
+  return args.includes(flag) || ["1", "true"].includes(getEnv(envVar)?.toLowerCase() ?? "");
 }
 
 function fail(message: string): never {
@@ -75,21 +88,21 @@ function parseToolsets(value: string | undefined): Toolset[] | undefined {
 }
 
 export function parseArgs(argv: string[]): Config {
-  const store = getArg(argv, "--store") ?? process.env.SHOPIFY_STORE;
+  const store = getArg(argv, "--store") ?? getEnv("SHOPIFY_STORE");
   const accessTokenArg = getArg(argv, "--access-token");
-  const accessToken = accessTokenArg ?? process.env.SHOPIFY_ACCESS_TOKEN;
+  const accessToken = accessTokenArg ?? getEnv("SHOPIFY_ACCESS_TOKEN");
   const clientId =
     getArg(argv, "--client-id") ??
     getArg(argv, "--clientId") ??
-    process.env.SHOPIFY_CLIENT_ID;
+    getEnv("SHOPIFY_CLIENT_ID");
   const clientSecretArg =
     getArg(argv, "--client-secret") ?? getArg(argv, "--clientSecret");
-  const clientSecret = clientSecretArg ?? process.env.SHOPIFY_CLIENT_SECRET;
+  const clientSecret = clientSecretArg ?? getEnv("SHOPIFY_CLIENT_SECRET");
   const apiVersion =
     getArg(argv, "--api-version") ??
-    process.env.SHOPIFY_API_VERSION ??
+    getEnv("SHOPIFY_API_VERSION") ??
     DEFAULT_API_VERSION;
-  const uploadDir = getArg(argv, "--upload-dir") ?? process.env.SHOPIFY_UPLOAD_DIR;
+  const uploadDir = getArg(argv, "--upload-dir") ?? getEnv("SHOPIFY_UPLOAD_DIR");
 
   if (!store) fail("--store is required (e.g. --store mystore.myshopify.com)");
 
@@ -116,7 +129,7 @@ export function parseArgs(argv: string[]): Config {
     store: normalizedStore,
     apiVersion,
     readOnly: getFlag(argv, "--read-only", "SHOPIFY_READ_ONLY"),
-    toolsets: parseToolsets(getArg(argv, "--toolsets") ?? process.env.SHOPIFY_TOOLSETS),
+    toolsets: parseToolsets(getArg(argv, "--toolsets") ?? getEnv("SHOPIFY_TOOLSETS")),
     uploadDir: uploadDir ? path.resolve(uploadDir) : undefined,
     allowLiveThemeWrites: getFlag(
       argv,
@@ -134,6 +147,12 @@ export function parseArgs(argv: string[]): Config {
       ...base,
       auth: { mode: "client-credentials", clientId, clientSecret },
     };
+  }
+
+  if (clientId || clientSecret) {
+    fail(
+      `Client credentials are incomplete: ${clientId ? "SHOPIFY_CLIENT_SECRET (--client-secret)" : "SHOPIFY_CLIENT_ID (--client-id)"} is missing`
+    );
   }
 
   fail("Provide either --access-token or both --client-id and --client-secret");

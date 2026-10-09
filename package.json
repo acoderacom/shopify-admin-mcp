@@ -1,0 +1,56 @@
+{
+  "name": "@acoderacom/shopify-admin-mcp",
+  "version": "1.0.0",
+  "description": "MCP server providing full access to Shopify's Admin GraphQL API with schema introspection",
+  "type": "module",
+  "bin": {
+    "shopify-admin-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "dev": "tsc --watch",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "graphql": "^16.14.2",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
+  },
+  "keywords": [
+    "mcp",
+    "shopify",
+    "graphql",
+    "admin-api",
+    "model-context-protocol",
+    "metaobjects",
+    "metafields"
+  ],
+  "author": "acoderacom (https://github.com/acoderacom)",
+  "contributors": [
+    "Colby McHenry (https://github.com/colbymchenry)"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/acoderacom/shopify-admin-mcp.git"
+  },
+  "homepage": "https://github.com/acoderacom/shopify-admin-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/acoderacom/shopify-admin-mcp/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

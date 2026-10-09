@@ -495,6 +495,19 @@ Every variable at once, with client credentials:
 
 For a legacy token, replace `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET` with `"SHOPIFY_ACCESS_TOKEN": "${SHOPIFY_ACCESS_TOKEN}"`. The `${VAR}` references work in Claude Code's `.mcp.json`; in the Claude Desktop config, write the values directly.
 
+Blank values and unfilled variable references (`${VAR}`, `${VAR:-}`, `$VAR`) are treated as not set, for every option. That lets one config list both authentication methods and use whichever has real values, which helps with clients such as Claude Desktop that pass `${VAR}` through literally:
+
+```json
+"env": {
+  "SHOPIFY_STORE": "mystore.myshopify.com",
+  "SHOPIFY_ACCESS_TOKEN": "${SHOPIFY_ACCESS_TOKEN}",
+  "SHOPIFY_CLIENT_ID": "${SHOPIFY_CLIENT_ID}",
+  "SHOPIFY_CLIENT_SECRET": "${SHOPIFY_CLIENT_SECRET}"
+}
+```
+
+The startup log on stderr says which method was used, for example `Connecting to mystore.myshopify.com (API 2026-10, client credentials)...`.
+
 If you set the same option both ways:
 
 - For options that take a value (`--store`, credentials, `--api-version`, `--toolsets`, `--upload-dir`), the flag wins.

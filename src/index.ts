@@ -12,7 +12,7 @@ async function main() {
   const config = parseArgs(process.argv);
 
   console.error(
-    `Connecting to ${config.store} (API ${config.apiVersion}${config.readOnly ? ", read-only" : ""})...`
+    `Connecting to ${config.store} (API ${config.apiVersion}, ${config.auth.mode === "access-token" ? "access token" : "client credentials"}${config.readOnly ? ", read-only" : ""})...`
   );
 
   const auth = new AuthProvider(config);

@@ -127,6 +127,73 @@ describe("parseArgs", () => {
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("Unknown toolset(s): shipping"));
   });
 
+  describe("blank and unexpanded values", () => {
+    const store = ["--store", "mystore"];
+
+    it("uses the access token when the client credentials are unexpanded placeholders", () => {
+      vi.stubEnv("SHOPIFY_ACCESS_TOKEN", "shpat_real");
+      vi.stubEnv("SHOPIFY_CLIENT_ID", "${SHOPIFY_CLIENT_ID}");
+      vi.stubEnv("SHOPIFY_CLIENT_SECRET", "${SHOPIFY_CLIENT_SECRET}");
+      expect(parse(...store).auth).toEqual({ mode: "access-token", accessToken: "shpat_real" });
+    });
+
+    it("uses client credentials when the access token is an unexpanded placeholder", () => {
+      vi.stubEnv("SHOPIFY_ACCESS_TOKEN", "${SHOPIFY_ACCESS_TOKEN}");
+      vi.stubEnv("SHOPIFY_CLIENT_ID", "id");
+      vi.stubEnv("SHOPIFY_CLIENT_SECRET", "secret");
+      expect(parse(...store).auth).toEqual({ mode: "client-credentials", clientId: "id", clientSecret: "secret" });
+    });
+
+    it.each(["", "   ", "$SHOPIFY_ACCESS_TOKEN", "${SHOPIFY_ACCESS_TOKEN:-}", "${ SHOPIFY_ACCESS_TOKEN }"])(
+      "treats an access token of %j as not set",
+      (value) => {
+        vi.stubEnv("SHOPIFY_ACCESS_TOKEN", value);
+        vi.stubEnv("SHOPIFY_CLIENT_ID", "id");
+        vi.stubEnv("SHOPIFY_CLIENT_SECRET", "secret");
+        expect(parse(...store).auth.mode).toBe("client-credentials");
+      }
+    );
+
+    it("trims surrounding whitespace from real values", () => {
+      vi.stubEnv("SHOPIFY_ACCESS_TOKEN", "  shpat_real\n");
+      expect(parse(...store).auth).toEqual({ mode: "access-token", accessToken: "shpat_real" });
+    });
+
+    it("ignores placeholder flags in args and falls back to the environment", () => {
+      vi.stubEnv("SHOPIFY_CLIENT_ID", "id");
+      vi.stubEnv("SHOPIFY_CLIENT_SECRET", "secret");
+      const config = parse(...store, "--access-token", "${SHOPIFY_ACCESS_TOKEN}", "--api-version", "${API_VERSION}");
+      expect(config.auth.mode).toBe("client-credentials");
+      expect(config.apiVersion).toBe("2026-10");
+      expect(console.error).not.toHaveBeenCalledWith(expect.stringContaining("process listings"));
+    });
+
+    it("ignores placeholder options and keeps their defaults", () => {
+      vi.stubEnv("SHOPIFY_ACCESS_TOKEN", "t");
+      vi.stubEnv("SHOPIFY_TOOLSETS", "${SHOPIFY_TOOLSETS}");
+      vi.stubEnv("SHOPIFY_UPLOAD_DIR", "");
+      vi.stubEnv("SHOPIFY_READ_ONLY", "${SHOPIFY_READ_ONLY}");
+      const config = parse(...store);
+      expect(config).toMatchObject({ readOnly: false, allowLiveThemeWrites: false });
+      expect(config.toolsets).toBeUndefined();
+      expect(config.uploadDir).toBeUndefined();
+    });
+
+    it("treats a placeholder store as missing", () => {
+      vi.stubEnv("SHOPIFY_STORE", "${SHOPIFY_STORE}");
+      vi.stubEnv("SHOPIFY_ACCESS_TOKEN", "t");
+      expect(() => parse()).toThrow("exit 1");
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining("--store is required"));
+    });
+
+    it("explains which client credential is missing", () => {
+      vi.stubEnv("SHOPIFY_CLIENT_ID", "id");
+      vi.stubEnv("SHOPIFY_CLIENT_SECRET", "${SHOPIFY_CLIENT_SECRET}");
+      expect(() => parse(...store)).toThrow("exit 1");
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining("SHOPIFY_CLIENT_SECRET (--client-secret) is missing"));
+    });
+  });
+
   it("requires a store", () => {
     expect(() => parse("--access-token", "t")).toThrow("exit 1");
   });

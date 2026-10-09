@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { callTool, connect, resultText, type FakeGraphQLClient } from "./helpers.js";
@@ -236,6 +237,11 @@ const toolCalls: Array<{
 const testedSeparately = ["shopify_theme_files_upsert", "shopify_theme_files_delete", "shopify_file_upload"];
 
 describe("tool registry", () => {
+  it("identifies itself with the package version", async () => {
+    const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    expect(client.getServerVersion()).toEqual({ name: "shopify-admin-mcp", version });
+  });
+
   it("registers 53 tools, each with behaviour annotations", async () => {
     const { tools } = await client.listTools();
     expect(tools).toHaveLength(53);

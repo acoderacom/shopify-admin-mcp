@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { GraphQLClient } from "./graphql/client.js";
 import type { SchemaIndex } from "./graphql/schema-index.js";
@@ -16,6 +17,9 @@ import { registerInventoryTools } from "./tools/inventory.js";
 import { registerFileTools } from "./tools/files.js";
 import { registerThemeTools } from "./tools/themes.js";
 import { registerMarketTools } from "./tools/markets.js";
+
+// Resolves to the package root from both src/ (tests) and dist/ (published build)
+const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
 
 export type ServerOptions = Pick<Config, "readOnly"> &
   Partial<Pick<Config, "toolsets" | "uploadDir" | "allowLiveThemeWrites">>;
@@ -46,8 +50,8 @@ export function createServer(
   options: ServerOptions
 ): McpServer {
   const server = new McpServer({
-    name: "shopify-graphql-admin",
-    version: "1.0.0",
+    name: "shopify-admin-mcp",
+    version,
   });
 
   const registrar = options.readOnly ? readOnlyRegistrar(server) : server;

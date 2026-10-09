@@ -1,14 +1,15 @@
 {
-  "name": "@acoderacom/shopify-admin-mcp",
+  "name": "@acodera/shopify-admin-mcp",
   "version": "1.0.0",
   "description": "MCP server providing full access to Shopify's Admin GraphQL API with schema introspection",
   "type": "module",
   "bin": {
-    "shopify-admin-mcp": "./dist/index.js"
+    "shopify-admin-mcp": "dist/index.js"
   },
   "main": "./dist/index.js",
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc && chmod +x dist/index.js",
@@ -16,7 +17,9 @@
     "lint": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run lint && npm test && npm run build"
+    "changeset": "changeset",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run lint && npm test"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -27,6 +30,8 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^1.0.1",
+    "@changesets/cli": "^3.0.3",
     "@types/node": "^26.6.4",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"

@@ -272,6 +272,18 @@ The store must be a `*.myshopify.com` domain, so credentials are only ever sent 
 
 ## Usage with Claude Code
 
+With OAuth client credentials (Dev Dashboard app):
+
+```bash
+claude mcp add shopify \
+  -e SHOPIFY_STORE=mystore.myshopify.com \
+  -e SHOPIFY_CLIENT_ID=your_client_id \
+  -e SHOPIFY_CLIENT_SECRET=your_client_secret \
+  -- npx -y @acodera/shopify-admin-mcp
+```
+
+With a legacy access token:
+
 ```bash
 claude mcp add shopify \
   -e SHOPIFY_STORE=mystore.myshopify.com \
@@ -279,7 +291,7 @@ claude mcp add shopify \
   -- npx -y @acodera/shopify-admin-mcp
 ```
 
-Or add it to your project's `.mcp.json`:
+Or add it to your project's `.mcp.json`. Claude Code expands `${VAR}` from your shell environment, so the file can be committed without secrets. With client credentials:
 
 ```json
 {
@@ -289,18 +301,54 @@ Or add it to your project's `.mcp.json`:
       "args": ["-y", "@acodera/shopify-admin-mcp"],
       "env": {
         "SHOPIFY_STORE": "mystore.myshopify.com",
-        "SHOPIFY_ACCESS_TOKEN": "shpat_xxxxx"
+        "SHOPIFY_CLIENT_ID": "${SHOPIFY_CLIENT_ID}",
+        "SHOPIFY_CLIENT_SECRET": "${SHOPIFY_CLIENT_SECRET}"
       }
     }
   }
 }
 ```
 
-Don't commit real tokens. Claude Code expands `${VAR}` in `.mcp.json`, so you can reference variables from your shell instead.
+With a legacy access token:
+
+```json
+{
+  "mcpServers": {
+    "shopify": {
+      "command": "npx",
+      "args": ["-y", "@acodera/shopify-admin-mcp"],
+      "env": {
+        "SHOPIFY_STORE": "mystore.myshopify.com",
+        "SHOPIFY_ACCESS_TOKEN": "${SHOPIFY_ACCESS_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+To add options such as `--read-only` or `--toolsets`, see [Adding Options](#adding-options).
 
 ## Usage with Claude Desktop
 
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`). With client credentials:
+
+```json
+{
+  "mcpServers": {
+    "shopify": {
+      "command": "npx",
+      "args": ["-y", "@acodera/shopify-admin-mcp"],
+      "env": {
+        "SHOPIFY_STORE": "mystore.myshopify.com",
+        "SHOPIFY_CLIENT_ID": "your_client_id",
+        "SHOPIFY_CLIENT_SECRET": "your_client_secret"
+      }
+    }
+  }
+}
+```
+
+With a legacy access token:
 
 ```json
 {
@@ -318,6 +366,81 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 ```
 
 If you install the package globally (`npm install -g @acodera/shopify-admin-mcp`), you can use `"command": "shopify-admin-mcp"` with no `args`.
+
+## Adding Options
+
+Options from the [Configuration](#configuration) table go **after the package name**, either as flags or as environment variables.
+
+### As flags
+
+With `claude mcp add`, append them after the package name:
+
+```bash
+claude mcp add shopify \
+  -e SHOPIFY_STORE=mystore.myshopify.com \
+  -e SHOPIFY_CLIENT_ID=your_client_id \
+  -e SHOPIFY_CLIENT_SECRET=your_client_secret \
+  -- npx -y @acodera/shopify-admin-mcp --toolsets products,collections,publishing,files --upload-dir /Users/you/shopify-uploads
+```
+
+In `.mcp.json` or the Claude Desktop config, add them to `args`. Each flag and each value is its own string:
+
+```json
+{
+  "mcpServers": {
+    "shopify": {
+      "command": "npx",
+      "args": [
+        "-y", "@acodera/shopify-admin-mcp",
+        "--toolsets", "products,collections,publishing,files",
+        "--upload-dir", "/Users/you/shopify-uploads"
+      ],
+      "env": {
+        "SHOPIFY_STORE": "mystore.myshopify.com",
+        "SHOPIFY_CLIENT_ID": "${SHOPIFY_CLIENT_ID}",
+        "SHOPIFY_CLIENT_SECRET": "${SHOPIFY_CLIENT_SECRET}"
+      }
+    }
+  }
+}
+```
+
+A read-only assistant for reporting:
+
+```json
+"args": ["-y", "@acodera/shopify-admin-mcp", "--read-only", "--toolsets", "products,orders,customers"]
+```
+
+A theme editor that may change the live theme:
+
+```json
+"args": ["-y", "@acodera/shopify-admin-mcp", "--toolsets", "themes,files", "--allow-live-theme-writes"]
+```
+
+### As environment variables
+
+Every flag also has an environment variable, which you can put in `env` instead of `args`:
+
+```json
+{
+  "mcpServers": {
+    "shopify": {
+      "command": "npx",
+      "args": ["-y", "@acodera/shopify-admin-mcp"],
+      "env": {
+        "SHOPIFY_STORE": "mystore.myshopify.com",
+        "SHOPIFY_CLIENT_ID": "${SHOPIFY_CLIENT_ID}",
+        "SHOPIFY_CLIENT_SECRET": "${SHOPIFY_CLIENT_SECRET}",
+        "SHOPIFY_TOOLSETS": "products,collections,publishing,files",
+        "SHOPIFY_UPLOAD_DIR": "/Users/you/shopify-uploads",
+        "SHOPIFY_READ_ONLY": "false"
+      }
+    }
+  }
+}
+```
+
+Use an absolute path for `--upload-dir`, because MCP clients start the server from their own working directory, not your project's.
 
 ## Schema Exploration
 

@@ -260,7 +260,26 @@ npm run build
 npm run dev  # watch mode
 ```
 
-Requires Node.js 18 or later. Built with TypeScript 7.
+The server runs on Node.js 18 or later. Developing and testing it needs Node.js 22.12 or later (TypeScript 7, Vitest 5).
+
+## Testing
+
+```bash
+npm test       # unit tests; live tests are skipped without credentials
+npm run lint   # type-check src and tests
+```
+
+The unit tests need no network. They cover CLI validation, the HTTP client (throttle retry, token refresh), every tool's request over a real MCP connection, and read-only mode.
+
+Live integration tests run against a real store when credentials are set:
+
+```bash
+SHOPIFY_STORE=your-dev-store.myshopify.com \
+SHOPIFY_ACCESS_TOKEN=shpat_xxxxx \
+npm test
+```
+
+Add `SHOPIFY_TEST_WRITES=1` to also run the write tests. They create `[MCP test]` products, collections, metaobjects, and customers, run every write tool against them, and delete them afterwards. Only run write tests against a development store.
 
 ## License
 

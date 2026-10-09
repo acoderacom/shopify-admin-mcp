@@ -13,8 +13,10 @@
   "scripts": {
     "build": "tsc && chmod +x dist/index.js",
     "dev": "tsc --watch",
-    "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "lint": "tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run lint && npm test && npm run build"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -26,7 +28,8 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
   },
   "keywords": [
     "mcp",

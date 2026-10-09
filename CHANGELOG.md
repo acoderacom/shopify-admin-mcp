@@ -1,5 +1,19 @@
 # @acodera/shopify-admin-mcp
 
+## 1.2.0
+
+### Minor Changes
+
+- [#9](https://github.com/acoderacom/shopify-admin-mcp/pull/9) [`4ffbe0b`](https://github.com/acoderacom/shopify-admin-mcp/commit/4ffbe0be98eb30b25a24ae6a05486346db66508d) Thanks [@acoderacom](https://github.com/acoderacom)! - Apply the live-theme guard to `shopify_graphql`: `themeFilesUpsert`, `themeFilesDelete`, and `themeFilesCopy` are refused when they target the live theme, and `themePublish` is refused, unless the server runs with `--allow-live-theme-writes`. Previously raw GraphQL could skip the guard the theme tools enforce. Add `--disable-raw-graphql` (`SHOPIFY_DISABLE_RAW_GRAPHQL`) to leave out `shopify_graphql`, so `--toolsets` limits what the assistant can reach.
+
+### Patch Changes
+
+- [#9](https://github.com/acoderacom/shopify-admin-mcp/pull/9) [`4ffbe0b`](https://github.com/acoderacom/shopify-admin-mcp/commit/4ffbe0be98eb30b25a24ae6a05486346db66508d) Thanks [@acoderacom](https://github.com/acoderacom)! - Discount create tools reject inputs Shopify can't apply as asked. Combining `customerIds`, `customerSegmentIds`, and `marketIds` used to fail at Shopify, because a discount takes one kind of eligibility. Passing `collectionIds` together with `productIds` or `variantIds` used to drop the products and variants without a word.
+
+- [#9](https://github.com/acoderacom/shopify-admin-mcp/pull/9) [`4ffbe0b`](https://github.com/acoderacom/shopify-admin-mcp/commit/4ffbe0be98eb30b25a24ae6a05486346db66508d) Thanks [@acoderacom](https://github.com/acoderacom)! - Nested lists with a fixed size (product variants and metafields, order line items, inventory levels, customer addresses and orders, theme files, publications, market regions, and more) now include `pageInfo.hasNextPage`, and `shopify_product_get` returns `variantsCount`, so the assistant can tell when results were cut short. Product tools accept the `UNLISTED` status. `shopify_theme_files_get` flags files it couldn't read as an error, and `shopify_file_upload` reports Shopify's reason when a staged upload is rejected instead of a JavaScript error.
+
+- [#9](https://github.com/acoderacom/shopify-admin-mcp/pull/9) [`4ffbe0b`](https://github.com/acoderacom/shopify-admin-mcp/commit/4ffbe0be98eb30b25a24ae6a05486346db66508d) Thanks [@acoderacom](https://github.com/acoderacom)! - The server checks credentials with a small `shop` query and connects before introspecting the schema, so a slow introspection no longer delays the client's handshake; schema tools wait for it and retry it if it failed. HTTP 429 responses honor `Retry-After` (up to a minute), and discarded responses are released before retrying. `shopify_schema_details` lists root types by name and shortens descriptions on very large types, `shopify_schema_search` rejects an empty query, and the server sends usage instructions to MCP clients.
+
 ## 1.1.1
 
 ### Patch Changes

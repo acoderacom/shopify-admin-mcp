@@ -1,5 +1,11 @@
 # @acodera/shopify-admin-mcp
 
+## 1.0.1
+
+### Patch Changes
+
+- [#3](https://github.com/acoderacom/shopify-admin-mcp/pull/3) [`8aef080`](https://github.com/acoderacom/shopify-admin-mcp/commit/8aef080c6558da9bf5e672668f738f0386eb5c43) Thanks [@acoderacom](https://github.com/acoderacom)! - Document OAuth client credentials setup for Claude Code (`claude mcp add` and `.mcp.json`) and Claude Desktop, alongside the legacy access token, and show how to pass options such as `--read-only`, `--toolsets`, and `--upload-dir` as flags or environment variables.
+
 ## 1.0.0
 
 ### Major Changes

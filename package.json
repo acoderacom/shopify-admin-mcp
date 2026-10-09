@@ -1,6 +1,6 @@
 {
   "name": "@acodera/shopify-admin-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP server providing full access to Shopify's Admin GraphQL API with schema introspection",
   "type": "module",
   "bin": {

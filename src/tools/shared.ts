@@ -37,7 +37,12 @@ export function toolResult(result: GraphQLResponse): CallToolResult {
 }
 
 function hasErrors(result: GraphQLResponse): boolean {
-  if (result.errors?.length) return true;
+  // Partial data (e.g. one nested field the app lacks a scope for) is still a usable result;
+  // the errors stay in the payload for the caller to see
+  if (result.errors?.length) {
+    const fields = Object.values(result.data ?? {});
+    if (fields.length === 0 || fields.every((value) => value === null)) return true;
+  }
   // Mutation payloads report validation failures as userErrors rather than top-level errors
   return Object.values(result.data ?? {}).some((payload) => {
     const userErrors = (payload as { userErrors?: unknown } | null)?.userErrors;

@@ -1,7 +1,30 @@
+import path from "node:path";
+
+export const TOOLSETS = [
+  "products",
+  "collections",
+  "publishing",
+  "metafields",
+  "metaobjects",
+  "customers",
+  "orders",
+  "inventory",
+  "files",
+  "themes",
+  "markets",
+] as const;
+
+export type Toolset = (typeof TOOLSETS)[number];
+
 export interface Config {
   store: string;
   apiVersion: string;
   readOnly: boolean;
+  /** Toolsets to register; undefined registers all of them. */
+  toolsets?: Toolset[];
+  /** Directory that local file uploads are confined to; undefined disables local uploads. */
+  uploadDir?: string;
+  allowLiveThemeWrites: boolean;
   auth:
     | { mode: "access-token"; accessToken: string }
     | { mode: "client-credentials"; clientId: string; clientSecret: string };
@@ -19,6 +42,13 @@ function getArg(args: string[], flag: string): string | undefined {
   return args[idx + 1];
 }
 
+function getFlag(args: string[], flag: string, envVar: string): boolean {
+  return (
+    args.includes(flag) ||
+    ["1", "true"].includes(process.env[envVar]?.toLowerCase() ?? "")
+  );
+}
+
 function fail(message: string): never {
   console.error(`Error: ${message}`);
   process.exit(1);
@@ -31,6 +61,16 @@ function normalizeStore(store: string): string {
     .replace(/^https?:\/\//, "")
     .replace(/\/+$/, "");
   return host.endsWith(".myshopify.com") ? host : `${host}.myshopify.com`;
+}
+
+function parseToolsets(value: string | undefined): Toolset[] | undefined {
+  if (!value) return undefined;
+  const names = value.split(",").map((name) => name.trim()).filter(Boolean);
+  const unknown = names.filter((name) => !TOOLSETS.includes(name as Toolset));
+  if (unknown.length > 0) {
+    fail(`Unknown toolset(s): ${unknown.join(", ")}. Available: ${TOOLSETS.join(", ")}`);
+  }
+  return names as Toolset[];
 }
 
 export function parseArgs(argv: string[]): Config {
@@ -48,9 +88,7 @@ export function parseArgs(argv: string[]): Config {
     getArg(argv, "--api-version") ??
     process.env.SHOPIFY_API_VERSION ??
     DEFAULT_API_VERSION;
-  const readOnly =
-    argv.includes("--read-only") ||
-    ["1", "true"].includes(process.env.SHOPIFY_READ_ONLY?.toLowerCase() ?? "");
+  const uploadDir = getArg(argv, "--upload-dir") ?? process.env.SHOPIFY_UPLOAD_DIR;
 
   if (!store) fail("--store is required (e.g. --store mystore.myshopify.com)");
 
@@ -73,7 +111,18 @@ export function parseArgs(argv: string[]): Config {
     );
   }
 
-  const base = { store: normalizedStore, apiVersion, readOnly };
+  const base = {
+    store: normalizedStore,
+    apiVersion,
+    readOnly: getFlag(argv, "--read-only", "SHOPIFY_READ_ONLY"),
+    toolsets: parseToolsets(getArg(argv, "--toolsets") ?? process.env.SHOPIFY_TOOLSETS),
+    uploadDir: uploadDir ? path.resolve(uploadDir) : undefined,
+    allowLiveThemeWrites: getFlag(
+      argv,
+      "--allow-live-theme-writes",
+      "SHOPIFY_ALLOW_LIVE_THEME_WRITES"
+    ),
+  };
 
   if (accessToken) {
     return { ...base, auth: { mode: "access-token", accessToken } };

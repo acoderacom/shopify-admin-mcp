@@ -150,6 +150,78 @@ export function registerMetaobjectTools(
   );
 
   server.registerTool(
+    "shopify_metaobject_definition_create",
+    {
+      description: "Create a metaobject definition (a custom content type with typed fields)",
+      inputSchema: {
+        type: z.string().describe('Type identifier, e.g. "designer" (can\'t be changed later)'),
+        name: z.string().optional().describe("Name shown in the admin"),
+        description: z.string().optional(),
+        displayNameKey: z.string().optional().describe("Key of the field used as each entry's display name"),
+        fieldDefinitions: z
+          .array(
+            z.object({
+              key: z.string(),
+              type: z.string().describe("Metafield type, e.g. single_line_text_field, file_reference"),
+              name: z.string().optional(),
+              description: z.string().optional(),
+              required: z.boolean().optional(),
+              validations: z.array(z.object({ name: z.string(), value: z.string() })).optional(),
+            })
+          )
+          .min(1),
+        access: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe('MetaobjectAccessInput, e.g. { "storefront": "PUBLIC_READ" }'),
+        capabilities: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe('MetaobjectCapabilityCreateInput, e.g. { "publishable": { "enabled": true } }'),
+      },
+      annotations: WRITE,
+    },
+    async (definition) => {
+      const result = await client.execute(
+        `mutation ($definition: MetaobjectDefinitionCreateInput!) {
+          metaobjectDefinitionCreate(definition: $definition) {
+            metaobjectDefinition { id type name displayNameKey fieldDefinitions { key name type { name } required } }
+            userErrors { field message code }
+          }
+        }`,
+        { definition }
+      );
+      return toolResult(result);
+    }
+  );
+
+  server.registerTool(
+    "shopify_metaobject_upsert",
+    {
+      description:
+        "Create a metaobject entry, or update it if one with the same type and handle exists. Only the fields you pass are changed.",
+      inputSchema: {
+        type: z.string().describe("Metaobject type"),
+        handle: z.string().describe("Handle that identifies the entry within its type"),
+        fields: metaobjectFields.describe("Array of field key-value pairs"),
+      },
+      annotations: { ...WRITE, idempotentHint: true },
+    },
+    async ({ type, handle, fields }) => {
+      const result = await client.execute(
+        `mutation ($handle: MetaobjectHandleInput!, $metaobject: MetaobjectUpsertInput!) {
+          metaobjectUpsert(handle: $handle, metaobject: $metaobject) {
+            metaobject { id handle displayName fields { key value } }
+            userErrors { field message code }
+          }
+        }`,
+        { handle: { type, handle }, metaobject: { fields } }
+      );
+      return toolResult(result);
+    }
+  );
+
+  server.registerTool(
     "shopify_metaobject_delete",
     {
       description: "Permanently delete a metaobject entry",

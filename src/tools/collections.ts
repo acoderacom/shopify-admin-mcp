@@ -113,11 +113,16 @@ export function registerCollectionTools(
     "shopify_collection_update",
     {
       description:
-        "Update an existing collection. Only the fields you pass are changed; pass an empty string to clear the description.",
+        "Update an existing collection. Only the fields you pass are changed; pass an empty string to clear the description. To change which products are included, add or remove sources (see shopify_collection_get for source IDs).",
       inputSchema: {
         id: z.string().describe("Collection GID"),
         title: z.string().optional().describe("Collection title"),
         descriptionHtml: z.string().optional().describe("Collection description in HTML"),
+        sourcesToCreate: z
+          .array(z.record(z.string(), z.unknown()))
+          .optional()
+          .describe("Sources to add, as CollectionCreateSourceTargetInput objects"),
+        sourcesToDelete: z.array(z.string()).optional().describe("Source IDs to remove"),
       },
       annotations: WRITE,
     },

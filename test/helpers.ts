@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { GraphQLClient, GraphQLResponse } from "../src/graphql/client.js";
 import { SchemaIndex } from "../src/graphql/schema-index.js";
-import { createServer } from "../src/server.js";
+import { createServer, type ServerOptions } from "../src/server.js";
 
 export interface RecordedCall {
   query: string;
@@ -83,10 +83,11 @@ const schemaIndex = new SchemaIndex({
 });
 
 /** Connects a real MCP client to the server over an in-memory transport. */
-export async function connect(options: { readOnly?: boolean } = {}) {
+export async function connect(options: Partial<ServerOptions> = {}) {
   const fake = new FakeGraphQLClient();
   const server = createServer(fake as unknown as GraphQLClient, schemaIndex, {
-    readOnly: options.readOnly ?? false,
+    readOnly: false,
+    ...options,
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

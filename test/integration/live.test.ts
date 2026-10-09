@@ -5,6 +5,9 @@
  * they create, and delete them afterwards. Use a development store.
  */
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -12,7 +15,7 @@ import { AuthProvider } from "../../src/auth/provider.js";
 import { GraphQLClient } from "../../src/graphql/client.js";
 import { runIntrospection } from "../../src/graphql/introspection.js";
 import { SchemaIndex } from "../../src/graphql/schema-index.js";
-import { createServer } from "../../src/server.js";
+import { createServer, type ServerOptions } from "../../src/server.js";
 import { parseArgs } from "../../src/utils/cli.js";
 import { callTool, resultText } from "../helpers.js";
 
@@ -27,11 +30,11 @@ const TIMEOUT = 60_000;
 // Shopify response payloads are checked by assertions, not types
 type Data = any;
 
-async function connectLive(readOnly: boolean) {
-  const config = { ...parseArgs(["node", "shopify-admin-mcp"]), readOnly };
+async function connectLive(readOnly: boolean, options: Partial<ServerOptions> = {}) {
+  const config = { ...parseArgs(["node", "shopify-admin-mcp"]), readOnly, ...options };
   const graphql = new GraphQLClient(new AuthProvider(config), config);
   const schema = await runIntrospection(graphql);
-  const server = createServer(graphql, new SchemaIndex(schema), { readOnly });
+  const server = createServer(graphql, new SchemaIndex(schema), config);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "live-test", version: "0.0.0" });
@@ -48,6 +51,24 @@ async function data(client: Client, tool: string, args: Record<string, unknown> 
 
 const graphql = (client: Client, query: string, variables?: Record<string, unknown>) =>
   data(client, "shopify_graphql", variables ? { query, variables } : { query });
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Retries `check` until it returns a value, for changes Shopify applies asynchronously. */
+async function eventually<T>(check: () => Promise<T | undefined>, attempts = 40, delayMs = 3000): Promise<T> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const value = await check();
+    if (value !== undefined) return value;
+    await pause(delayMs);
+  }
+  throw new Error("Timed out waiting for Shopify to finish processing");
+}
+
+// A valid 1x1 PNG
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64"
+);
 
 describe.skipIf(!hasCredentials)("live store: reads", { timeout: TIMEOUT }, () => {
   let client: Client;
@@ -117,6 +138,30 @@ describe.skipIf(!hasCredentials)("live store: reads", { timeout: TIMEOUT }, () =
     expect(got.order.id).toBe(order.id);
   });
 
+  it("lists publications, files, metafield definitions, and markets", async () => {
+    const publications = await data(client, "shopify_publications_list");
+    expect(publications.publications.nodes.length).toBeGreaterThan(0);
+    await data(client, "shopify_files_list", { first: 5 });
+    await data(client, "shopify_metafield_definitions_list", { ownerType: "PRODUCT", first: 5 });
+
+    const markets = await data(client, "shopify_markets_list", { first: 5 });
+    const market = markets.markets.nodes[0];
+    if (market) {
+      const got = await data(client, "shopify_market_get", { id: market.id });
+      expect(got.market.id).toBe(market.id);
+    }
+  });
+
+  it("reads the live theme's files without changing them", async () => {
+    const themes = await data(client, "shopify_themes_list", { roles: ["MAIN"] });
+    const main = themes.themes.nodes[0];
+    const list = await data(client, "shopify_theme_files_list", { themeId: main.id, filenames: ["layout/*"] });
+    expect(list.theme.files.nodes.map((f: Data) => f.filename)).toContain("layout/theme.liquid");
+
+    const got = await data(client, "shopify_theme_files_get", { themeId: main.id, filenames: ["layout/theme.liquid"] });
+    expect(got.theme.files.nodes[0].body.content).toContain("<html");
+  });
+
   it("lists metaobject definitions and entries", async () => {
     const defs = await data(client, "shopify_metaobject_definitions_list", { first: 10 });
     const def = defs.metaobjectDefinitions.nodes.find((d: Data) => d.metaobjectsCount > 0);
@@ -158,23 +203,35 @@ describe.skipIf(!writesEnabled)("live store: writes", { timeout: TIMEOUT }, () =
     collectionId?: string;
     definitionId?: string;
     metaobjectId?: string;
+    metafieldDefinitionId?: string;
     customerId?: string;
-  } = {};
+    fileIds: string[];
+  } = { fileIds: [] };
   let client: Client;
+  let uploadDir: string;
 
   beforeAll(async () => {
-    ({ client } = await connectLive(false));
+    uploadDir = await mkdtemp(path.join(tmpdir(), "shopify-mcp-live-"));
+    await writeFile(path.join(uploadDir, "mcp-test.png"), PNG);
+    ({ client } = await connectLive(false, { uploadDir }));
   }, TIMEOUT);
 
   // Best-effort cleanup so a failed assertion never leaves test data behind
   afterAll(async () => {
     if (!client) return;
     const cleanups: Array<[string, Record<string, unknown>] | undefined> = [
+      created.fileIds.length ? ["shopify_file_delete", { fileIds: created.fileIds }] : undefined,
       created.collectionId ? ["shopify_collection_delete", { id: created.collectionId }] : undefined,
       created.productId ? ["shopify_product_delete", { id: created.productId }] : undefined,
       created.metaobjectId ? ["shopify_metaobject_delete", { id: created.metaobjectId }] : undefined,
     ];
     for (const cleanup of cleanups) if (cleanup) await callTool(client, ...cleanup);
+    if (created.metafieldDefinitionId) {
+      await callTool(client, "shopify_graphql", {
+        query: "mutation ($id: ID!) { metafieldDefinitionDelete(id: $id, deleteAllAssociatedMetafields: true) { deletedDefinitionId userErrors { message } } }",
+        variables: { id: created.metafieldDefinitionId },
+      });
+    }
     if (created.definitionId) {
       await callTool(client, "shopify_graphql", {
         query: "mutation ($id: ID!) { metaobjectDefinitionDelete(id: $id) { deletedId userErrors { message } } }",
@@ -188,6 +245,7 @@ describe.skipIf(!writesEnabled)("live store: writes", { timeout: TIMEOUT }, () =
       });
     }
     await client.close();
+    await rm(uploadDir, { recursive: true, force: true });
   }, TIMEOUT);
 
   it("reports userErrors from a rejected create", async () => {
@@ -202,8 +260,10 @@ describe.skipIf(!writesEnabled)("live store: writes", { timeout: TIMEOUT }, () =
       status: "DRAFT",
       descriptionHtml: "<p>temporary</p>",
       tags: ["mcp-test"],
+      productOptions: [{ name: "Size", values: ["S"] }],
     });
     created.productId = d.productCreate.product.id;
+    expect(d.productCreate.product.options).toEqual([{ name: "Size", values: ["S"] }]);
 
     await data(client, "shopify_product_update", {
       id: created.productId,
@@ -214,6 +274,95 @@ describe.skipIf(!writesEnabled)("live store: writes", { timeout: TIMEOUT }, () =
     expect(got.product.title).toBe(`${label} (updated)`);
     expect(got.product.descriptionHtml).toBe("");
     expect(got.product.status).toBe("DRAFT");
+  });
+
+  it("adds and updates variants", async () => {
+    const productId = created.productId!;
+    const added = await data(client, "shopify_product_variants_create", {
+      productId,
+      variants: [
+        { optionValues: [{ optionName: "Size", name: "M" }], price: "120000", sku: "MCP-TEST-M" },
+        { optionValues: [{ optionName: "Size", name: "L" }], price: "130000", sku: "MCP-TEST-L" },
+      ],
+    });
+    const medium = added.productVariantsBulkCreate.productVariants.find((v: Data) => v.sku === "MCP-TEST-M");
+    expect(medium.selectedOptions).toEqual([{ name: "Size", value: "M" }]);
+
+    const updated = await data(client, "shopify_product_variants_update", {
+      productId,
+      variants: [{ id: medium.id, price: "99000", compareAtPrice: "150000", sku: "MCP-TEST-M2" }],
+    });
+    const variant = updated.productVariantsBulkUpdate.productVariants[0];
+    expect(Number(variant.price)).toBe(99000);
+    expect(Number(variant.compareAtPrice)).toBe(150000);
+    expect(variant.sku).toBe("MCP-TEST-M2");
+
+    const got = await data(client, "shopify_product_get", { id: productId });
+    expect(got.product.variants.nodes.map((v: Data) => v.title).sort()).toEqual(["L", "M", "S"]);
+  });
+
+  it("publishes and unpublishes the product", async () => {
+    const publications = await data(client, "shopify_publications_list");
+    const publicationIds = [publications.publications.nodes[0].id];
+
+    const published = await data(client, "shopify_publish", { id: created.productId, publicationIds });
+    expect(published.publishablePublish.publishable.id).toBe(created.productId);
+    await data(client, "shopify_unpublish", { id: created.productId, publicationIds });
+  });
+
+  it("uploads a local image, attaches it to the product, and deletes it", async () => {
+    const d = await data(client, "shopify_file_upload", {
+      path: "mcp-test.png",
+      alt: "MCP test image",
+      productId: created.productId,
+    });
+    created.fileIds.push(d.file.id);
+    expect(d.file.fileStatus).toBe("READY");
+    expect(d.file.image.url).toMatch(/^https:\/\/cdn\.shopify\.com\//);
+    expect(d.fileUpdate.userErrors).toEqual([]);
+
+    const media = await graphql(client, "query ($id: ID!) { product(id: $id) { media(first: 10) { nodes { id } } } }", {
+      id: created.productId,
+    });
+    expect(media.product.media.nodes.length).toBeGreaterThan(0);
+  });
+
+  it("uploads a file from a URL", async () => {
+    const source = await graphql(client, "{ files(first: 1, query: \"media_type:IMAGE status:READY\") { nodes { ... on MediaImage { image { url } } } } }");
+    const url = source.files.nodes[0]?.image?.url;
+    if (!url) return;
+
+    // Shopify requires a custom filename to keep the source's extension
+    const filename = `mcp-test-from-url${path.extname(new URL(url).pathname)}`;
+    const d = await data(client, "shopify_file_upload", { url, filename });
+    created.fileIds.push(d.file.id);
+    expect(d.file.fileStatus).toBe("READY");
+
+    const deleted = await data(client, "shopify_file_delete", { fileIds: created.fileIds });
+    expect(deleted.fileDelete.deletedFileIds.sort()).toEqual([...created.fileIds].sort());
+    created.fileIds = [];
+  });
+
+  it("refuses local files outside the upload directory", async () => {
+    const result = await callTool(client, "shopify_file_upload", { path: "/etc/hosts" });
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain("outside the upload directory");
+  });
+
+  it("creates and lists a metafield definition", async () => {
+    const key = `def_${Date.now()}`;
+    const d = await data(client, "shopify_metafield_definition_create", {
+      ownerType: "PRODUCT",
+      namespace: "mcp_test",
+      key,
+      name: "MCP test",
+      type: "single_line_text_field",
+      validations: [{ name: "max", value: "50" }],
+    });
+    created.metafieldDefinitionId = d.metafieldDefinitionCreate.createdDefinition.id;
+
+    const listed = await data(client, "shopify_metafield_definitions_list", { ownerType: "PRODUCT", namespace: "mcp_test" });
+    expect(listed.metafieldDefinitions.nodes.map((n: Data) => n.key)).toContain(key);
   });
 
   it("sets, lists, and deletes a metafield", async () => {
@@ -302,28 +451,42 @@ describe.skipIf(!writesEnabled)("live store: writes", { timeout: TIMEOUT }, () =
     expect(got.collection.title).toBe(`${label} (updated)`);
     expect(got.collection.sources).toHaveLength(1);
 
+    await data(client, "shopify_collection_update", {
+      id: created.collectionId,
+      sourcesToCreate: [{ source: { title: "MCP test extra", inclusion: { selections: [{ productId: created.productId }] } } }],
+    });
+    const withExtra = await data(client, "shopify_collection_get", { id: created.collectionId });
+    expect(withExtra.collection.sources).toHaveLength(2);
+
+    const extra = withExtra.collection.sources.find((source: Data) => source.title === "MCP test extra");
+    await data(client, "shopify_collection_update", { id: created.collectionId, sourcesToDelete: [extra.id] });
+    const afterDelete = await data(client, "shopify_collection_get", { id: created.collectionId });
+    expect(afterDelete.collection.sources).toHaveLength(1);
+
     const deleted = await data(client, "shopify_collection_delete", { id: created.collectionId });
     expect(deleted.collectionDelete.deletedCollectionId).toBe(created.collectionId);
     created.collectionId = undefined;
   });
 
-  it("creates, updates, and deletes a metaobject", async () => {
+  it("creates a metaobject definition, then creates, upserts, updates, and deletes an entry", async () => {
     const type = `mcp_test_${Date.now()}`;
-    const def = await graphql(
-      client,
-      `mutation ($definition: MetaobjectDefinitionCreateInput!) {
-        metaobjectDefinitionCreate(definition: $definition) { metaobjectDefinition { id type } userErrors { field message } }
-      }`,
-      { definition: { type, name: "MCP test", fieldDefinitions: [{ key: "name", name: "Name", type: "single_line_text_field" }] } }
-    );
+    const def = await data(client, "shopify_metaobject_definition_create", {
+      type,
+      name: "MCP test",
+      displayNameKey: "name",
+      fieldDefinitions: [{ key: "name", name: "Name", type: "single_line_text_field", required: true }],
+    });
     created.definitionId = def.metaobjectDefinitionCreate.metaobjectDefinition.id;
 
-    const d = await data(client, "shopify_metaobject_create", { type, fields: [{ key: "name", value: "one" }] });
+    const d = await data(client, "shopify_metaobject_create", { type, handle: "mcp-one", fields: [{ key: "name", value: "one" }] });
     created.metaobjectId = d.metaobjectCreate.metaobject.id;
 
-    await data(client, "shopify_metaobject_update", { id: created.metaobjectId, fields: [{ key: "name", value: "two" }] });
+    const upserted = await data(client, "shopify_metaobject_upsert", { type, handle: "mcp-one", fields: [{ key: "name", value: "two" }] });
+    expect(upserted.metaobjectUpsert.metaobject.id).toBe(created.metaobjectId);
+
+    await data(client, "shopify_metaobject_update", { id: created.metaobjectId, fields: [{ key: "name", value: "three" }] });
     const got = await data(client, "shopify_metaobject_get", { id: created.metaobjectId });
-    expect(got.metaobject.fields).toEqual([expect.objectContaining({ key: "name", value: "two" })]);
+    expect(got.metaobject.fields).toEqual([expect.objectContaining({ key: "name", value: "three" })]);
 
     const deleted = await data(client, "shopify_metaobject_delete", { id: created.metaobjectId });
     expect(deleted.metaobjectDelete.deletedId).toBe(created.metaobjectId);
@@ -349,5 +512,116 @@ describe.skipIf(!writesEnabled)("live store: writes", { timeout: TIMEOUT }, () =
     const deleted = await data(client, "shopify_product_delete", { id: created.productId });
     expect(deleted.productDelete.deletedProductId).toBe(created.productId);
     created.productId = undefined;
+  });
+});
+
+describe.skipIf(!writesEnabled)("live store: themes", { timeout: 300_000 }, () => {
+  let client: Client;
+  let mainThemeId: string;
+  let copyId: string | undefined;
+
+  beforeAll(async () => {
+    ({ client } = await connectLive(false));
+    const themes = await data(client, "shopify_themes_list", { roles: ["MAIN"] });
+    mainThemeId = themes.themes.nodes[0].id;
+  }, TIMEOUT);
+
+  afterAll(async () => {
+    if (copyId) await callTool(client, "shopify_theme_delete", { themeId: copyId });
+    await client?.close();
+  }, TIMEOUT);
+
+  it("duplicates the live theme and waits for the copy to finish processing", async () => {
+    const d = await data(client, "shopify_theme_duplicate", { themeId: mainThemeId, name: `[MCP test] ${Date.now()}` });
+    copyId = d.themeDuplicate.newTheme.id;
+    expect(d.themeDuplicate.newTheme.role).not.toBe("MAIN");
+
+    await eventually(async () => {
+      const themes = await data(client, "shopify_themes_list");
+      const copy = themes.themes.nodes.find((t: Data) => t.id === copyId);
+      return copy && !copy.processing ? copy : undefined;
+    });
+  });
+
+  it("writes, reads, and deletes a file in the copy", async () => {
+    const filename = "snippets/mcp-test.liquid";
+    const content = `{% comment %}MCP test ${Date.now()}{% endcomment %}`;
+
+    const upserted = await data(client, "shopify_theme_files_upsert", { themeId: copyId, files: [{ filename, content }] });
+    expect(upserted.themeFilesUpsert.upsertedThemeFiles).toEqual([{ filename }]);
+
+    const body = await eventually(async () => {
+      const got = await data(client, "shopify_theme_files_get", { themeId: copyId, filenames: [filename] });
+      const file = got.theme.files.nodes[0];
+      return file?.body.content === content ? file.body.content : undefined;
+    }, 10, 1000);
+    expect(body).toBe(content);
+
+    const deleted = await data(client, "shopify_theme_files_delete", { themeId: copyId, filenames: [filename] });
+    expect(deleted.themeFilesDelete.deletedThemeFiles).toEqual([{ filename }]);
+  });
+
+  it("refuses to write to the live theme", async () => {
+    const result = await callTool(client, "shopify_theme_files_upsert", {
+      themeId: mainThemeId,
+      files: [{ filename: "snippets/mcp-test.liquid", content: "x" }],
+    });
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain("live theme");
+  });
+
+  it("deletes the copy", async () => {
+    const d = await data(client, "shopify_theme_delete", { themeId: copyId });
+    expect(d.themeDelete.deletedThemeId).toBe(copyId);
+    copyId = undefined;
+  });
+});
+
+describe.skipIf(!writesEnabled)("live store: markets", { timeout: TIMEOUT }, () => {
+  let client: Client;
+  let marketId: string | undefined;
+
+  beforeAll(async () => {
+    ({ client } = await connectLive(false));
+  }, TIMEOUT);
+
+  afterAll(async () => {
+    if (marketId) await callTool(client, "shopify_market_delete", { id: marketId });
+    await client?.close();
+  }, TIMEOUT);
+
+  it("creates a draft market", async () => {
+    const d = await data(client, "shopify_market_create", {
+      name: `[MCP test] ${Date.now()}`,
+      status: "DRAFT",
+      countryCodes: ["SG"],
+      currencySettings: { baseCurrency: "SGD", localCurrencies: false },
+    });
+    const market = d.marketCreate.market;
+    marketId = market.id;
+    expect(market.status).toBe("DRAFT");
+    expect(market.conditions.regionsCondition.regions.nodes.map((r: Data) => r.code)).toEqual(["SG"]);
+    expect(market.currencySettings.baseCurrency.currencyCode).toBe("SGD");
+  });
+
+  it("updates its name and countries", async () => {
+    const d = await data(client, "shopify_market_update", {
+      id: marketId,
+      name: "[MCP test] SEA",
+      addCountryCodes: ["MY"],
+      removeCountryCodes: ["SG"],
+    });
+    const market = d.marketUpdate.market;
+    expect(market.name).toBe("[MCP test] SEA");
+    expect(market.conditions.regionsCondition.regions.nodes.map((r: Data) => r.code)).toEqual(["MY"]);
+
+    const got = await data(client, "shopify_market_get", { id: marketId });
+    expect(got.market.status).toBe("DRAFT");
+  });
+
+  it("deletes it", async () => {
+    const d = await data(client, "shopify_market_delete", { id: marketId });
+    expect(d.marketDelete.deletedId).toBe(marketId);
+    marketId = undefined;
   });
 });

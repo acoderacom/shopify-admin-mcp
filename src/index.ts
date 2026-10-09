@@ -44,7 +44,7 @@ async function main() {
     process.exit(1);
   }
 
-  const server = createServer(client, schemaIndex, { readOnly: config.readOnly });
+  const server = createServer(client, schemaIndex, config);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 

@@ -17,6 +17,23 @@ const productFields = {
   status: z.enum(["ACTIVE", "DRAFT", "ARCHIVED"]).optional().describe("Product status"),
 };
 
+const variantFields = {
+  price: z.string().optional().describe('Price as a decimal string, e.g. "19.99"'),
+  compareAtPrice: z.string().nullable().optional().describe("Compare-at price; null removes it"),
+  sku: z.string().optional().describe("Stock keeping unit"),
+  inventoryPolicy: z
+    .enum(["DENY", "CONTINUE"])
+    .optional()
+    .describe("CONTINUE allows selling when out of stock"),
+};
+
+const VARIANT_FIELDS = "id title price compareAtPrice sku inventoryPolicy selectedOptions { name value }";
+
+// SKU lives on the variant's inventory item in the bulk variant input
+function toVariantInput<T extends { sku?: string }>({ sku, ...variant }: T) {
+  return { ...variant, inventoryItem: sku === undefined ? undefined : { sku } };
+}
+
 export function registerProductTools(
   server: ToolRegistrar,
   client: GraphQLClient
@@ -95,14 +112,36 @@ export function registerProductTools(
       inputSchema: {
         title: z.string().describe("Product title"),
         ...productFields,
+        productOptions: z
+          .array(
+            z.object({
+              name: z.string().describe('Option name, e.g. "Size"'),
+              values: z.array(z.string()).min(1).describe('Option values, e.g. ["S", "M", "L"]'),
+            })
+          )
+          .optional()
+          .describe(
+            "Options to define on the product. Only the first value of each is used for the initial variant; add the rest with shopify_product_variants_create."
+          ),
       },
       annotations: WRITE,
     },
-    async (product) => {
+    async ({ productOptions, ...fields }) => {
+      const product = {
+        ...fields,
+        productOptions: productOptions?.map(({ name, values }) => ({
+          name,
+          values: values.map((value) => ({ name: value })),
+        })),
+      };
       const result = await client.execute(
         `mutation ($product: ProductCreateInput!) {
           productCreate(product: $product) {
-            product { id title handle status }
+            product {
+              id title handle status
+              options { name values }
+              variants(first: 1) { nodes { id title } }
+            }
             userErrors { field message }
           }
         }`,
@@ -133,6 +172,69 @@ export function registerProductTools(
           }
         }`,
         { product }
+      );
+      return toolResult(result);
+    }
+  );
+
+  server.registerTool(
+    "shopify_product_variants_create",
+    {
+      description:
+        "Add variants to a product. Each variant picks one value per product option; new option values are created automatically. A product's placeholder \"Default Title\" variant is replaced.",
+      inputSchema: {
+        productId: z.string().describe("Product GID"),
+        variants: z
+          .array(
+            z.object({
+              optionValues: z
+                .array(z.object({ optionName: z.string(), name: z.string() }))
+                .min(1)
+                .describe('e.g. [{ "optionName": "Size", "name": "M" }]'),
+              ...variantFields,
+            })
+          )
+          .min(1)
+          .max(250),
+      },
+      annotations: WRITE,
+    },
+    async ({ productId, variants }) => {
+      const result = await client.execute(
+        `mutation ($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+          productVariantsBulkCreate(productId: $productId, variants: $variants) {
+            productVariants { ${VARIANT_FIELDS} }
+            userErrors { field message code }
+          }
+        }`,
+        { productId, variants: variants.map(toVariantInput) }
+      );
+      return toolResult(result);
+    }
+  );
+
+  server.registerTool(
+    "shopify_product_variants_update",
+    {
+      description: "Update prices, compare-at prices, SKUs, or inventory policy of a product's variants",
+      inputSchema: {
+        productId: z.string().describe("Product GID"),
+        variants: z
+          .array(z.object({ id: z.string().describe("Variant GID"), ...variantFields }))
+          .min(1)
+          .max(250),
+      },
+      annotations: WRITE,
+    },
+    async ({ productId, variants }) => {
+      const result = await client.execute(
+        `mutation ($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+            productVariants { ${VARIANT_FIELDS} }
+            userErrors { field message code }
+          }
+        }`,
+        { productId, variants: variants.map(toVariantInput) }
       );
       return toolResult(result);
     }

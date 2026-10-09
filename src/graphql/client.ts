@@ -1,5 +1,6 @@
 import type { AuthProvider } from "../auth/provider.js";
 import type { Config } from "../utils/cli.js";
+import { sleep } from "../utils/sleep.js";
 
 export interface GraphQLResponse {
   data?: Record<string, unknown>;
@@ -19,8 +20,6 @@ interface QueryCost {
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const MAX_THROTTLE_RETRIES = 3;
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function isThrottled(res: GraphQLResponse): boolean {
   return res.errors?.some((e) => e.extensions?.code === "THROTTLED") ?? false;

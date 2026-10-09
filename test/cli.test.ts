@@ -1,3 +1,4 @@
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_API_VERSION, parseArgs } from "../src/utils/cli.js";
 
@@ -8,6 +9,9 @@ const ENV_KEYS = [
   "SHOPIFY_CLIENT_SECRET",
   "SHOPIFY_API_VERSION",
   "SHOPIFY_READ_ONLY",
+  "SHOPIFY_TOOLSETS",
+  "SHOPIFY_UPLOAD_DIR",
+  "SHOPIFY_ALLOW_LIVE_THEME_WRITES",
 ];
 
 const parse = (...args: string[]) => parseArgs(["node", "shopify-admin-mcp", ...args]);
@@ -33,6 +37,7 @@ describe("parseArgs", () => {
       store: "mystore.myshopify.com",
       apiVersion: "2026-10",
       readOnly: false,
+      allowLiveThemeWrites: false,
       auth: { mode: "access-token", accessToken: "shpat_x" },
     });
   });
@@ -76,6 +81,7 @@ describe("parseArgs", () => {
       store: "envstore.myshopify.com",
       apiVersion: "2026-07",
       readOnly: true,
+      allowLiveThemeWrites: false,
       auth: { mode: "client-credentials", clientId: "id", clientSecret: "secret" },
     });
     expect(console.error).not.toHaveBeenCalled();
@@ -94,6 +100,31 @@ describe("parseArgs", () => {
     vi.stubEnv("SHOPIFY_CLIENT_ID", "id");
     vi.stubEnv("SHOPIFY_CLIENT_SECRET", "secret");
     expect(parse("--store", "s", "--access-token", "t").auth.mode).toBe("access-token");
+  });
+
+  it("parses toolsets, the upload directory, and live theme writes", () => {
+    const config = parse(
+      "--store", "s", "--access-token", "t",
+      "--toolsets", "products, themes",
+      "--upload-dir", "uploads",
+      "--allow-live-theme-writes"
+    );
+    expect(config.toolsets).toEqual(["products", "themes"]);
+    expect(config.uploadDir).toBe(path.resolve("uploads"));
+    expect(config.allowLiveThemeWrites).toBe(true);
+  });
+
+  it("reads toolsets, upload directory, and live theme writes from the environment", () => {
+    vi.stubEnv("SHOPIFY_TOOLSETS", "files");
+    vi.stubEnv("SHOPIFY_UPLOAD_DIR", "/tmp/uploads");
+    vi.stubEnv("SHOPIFY_ALLOW_LIVE_THEME_WRITES", "1");
+    const config = parse("--store", "s", "--access-token", "t");
+    expect(config).toMatchObject({ toolsets: ["files"], uploadDir: "/tmp/uploads", allowLiveThemeWrites: true });
+  });
+
+  it("rejects unknown toolsets", () => {
+    expect(() => parse("--store", "s", "--access-token", "t", "--toolsets", "products,shipping")).toThrow("exit 1");
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("Unknown toolset(s): shipping"));
   });
 
   it("requires a store", () => {

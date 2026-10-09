@@ -7,6 +7,7 @@ const tokenConfig: Config = {
   store: "mystore.myshopify.com",
   apiVersion: "2026-10",
   readOnly: false,
+  allowLiveThemeWrites: false,
   auth: { mode: "access-token", accessToken: "shpat_test" },
 };
 

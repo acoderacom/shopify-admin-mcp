@@ -8,6 +8,7 @@ const tokenConfig: Config = {
   apiVersion: "2026-10",
   readOnly: false,
   allowLiveThemeWrites: false,
+  disableRawGraphql: false,
   auth: { mode: "access-token", accessToken: "shpat_test" },
 };
 
@@ -114,6 +115,39 @@ describe("GraphQLClient", () => {
     expect(delays).toEqual([1000, 2000]);
   });
 
+  it("waits as long as Retry-After asks before retrying HTTP 429", async () => {
+    const limited = new Response("Too Many Requests", { status: 429, headers: { "retry-after": "2.5" } });
+    fetchMock.mockResolvedValueOnce(limited).mockResolvedValueOnce(jsonResponse({ data: { ok: true } }));
+    const client = new GraphQLClient(new AuthProvider(tokenConfig), tokenConfig);
+
+    await expect(client.execute("{ shop { name } }")).resolves.toEqual({ data: { ok: true } });
+    expect(delays).toEqual([2500]);
+    // The discarded response is released rather than left holding its connection
+    expect(limited.bodyUsed).toBe(true);
+  });
+
+  it("accepts Retry-After as an HTTP date", async () => {
+    const retryAt = new Date(Date.now() + 3000).toUTCString();
+    fetchMock
+      .mockResolvedValueOnce(new Response(null, { status: 429, headers: { "retry-after": retryAt } }))
+      .mockResolvedValueOnce(jsonResponse({ data: { ok: true } }));
+    const client = new GraphQLClient(new AuthProvider(tokenConfig), tokenConfig);
+
+    await client.execute("{ shop { name } }");
+    expect(delays).toHaveLength(1);
+    expect(delays[0]).toBeGreaterThan(1000);
+    expect(delays[0]).toBeLessThanOrEqual(3000);
+  });
+
+  it("reports HTTP 429 instead of waiting more than a minute", async () => {
+    fetchMock.mockResolvedValue(new Response("Slow down", { status: 429, headers: { "retry-after": "120" } }));
+    const client = new GraphQLClient(new AuthProvider(tokenConfig), tokenConfig);
+
+    await expect(client.execute("{ shop { name } }")).rejects.toThrow("(429): Slow down");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(delays).toEqual([]);
+  });
+
   it("does not retry server errors, since a mutation may already have run", async () => {
     fetchMock.mockResolvedValue(new Response("boom", { status: 502 }));
     const client = new GraphQLClient(new AuthProvider(tokenConfig), tokenConfig);
@@ -141,6 +175,8 @@ describe("GraphQLClient", () => {
     await expect(client.execute("{ shop { name } }")).resolves.toEqual({ data: { ok: true } });
     expect(requestHeaders(1)["X-Shopify-Access-Token"]).toBe("token-1");
     expect(requestHeaders(3)["X-Shopify-Access-Token"]).toBe("token-2");
+    const rejected = await fetchMock.mock.results[1]!.value;
+    expect(rejected.bodyUsed).toBe(true);
   });
 
   it("warns once when Shopify serves a different API version", async () => {

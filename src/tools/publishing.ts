@@ -29,8 +29,9 @@ export function registerPublishingTools(
             nodes {
               id autoPublish supportsFuturePublishing
               catalog { id title }
-              channels(first: 5) { nodes { id name handle } }
+              channels(first: 5) { nodes { id name handle } pageInfo { hasNextPage } }
             }
+            pageInfo { hasNextPage }
           }
         }`
       );

@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
+import { Kind, parse, visit } from "graphql";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { callTool, connect, resultText, type FakeGraphQLClient } from "./helpers.js";
+import { SchemaIndex, lazySchemaIndex } from "../src/graphql/schema-index.js";
+import { callTool, connect, resultText, schemaIndex, type FakeGraphQLClient } from "./helpers.js";
 
 let client: Client;
 let fake: FakeGraphQLClient;
@@ -296,6 +298,28 @@ const toolCalls: Array<{
   },
 ];
 
+// Fields fetched with a fixed page size that report neither pageInfo nor a sibling count,
+// so a caller couldn't tell that items were left out
+function unreportedTruncation(query: string): string[] {
+  const fields: string[] = [];
+  visit(parse(query), {
+    SelectionSet(node) {
+      const siblings = new Set(node.selections.flatMap((s) => (s.kind === Kind.FIELD ? [s.name.value] : [])));
+      for (const selection of node.selections) {
+        if (selection.kind !== Kind.FIELD || !selection.arguments?.some((a) => a.name.value === "first")) continue;
+        const hasPageInfo = selection.selectionSet?.selections.some(
+          (s) => s.kind === Kind.FIELD && s.name.value === "pageInfo"
+        );
+        if (!hasPageInfo && !siblings.has(`${selection.name.value}Count`)) fields.push(selection.name.value);
+      }
+    },
+  });
+  return fields;
+}
+
+// A new product has exactly one variant, so its create response can't be cut short
+const singleItemConnections: Record<string, string[]> = { shopify_product_create: ["variants"] };
+
 // Multi-step tools with their own suites (themes.test.ts, files.test.ts)
 const testedSeparately = ["shopify_theme_files_upsert", "shopify_theme_files_delete", "shopify_file_upload"];
 
@@ -303,6 +327,15 @@ describe("tool registry", () => {
   it("identifies itself with the package version", async () => {
     const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     expect(client.getServerVersion()).toEqual({ name: "shopify-admin-mcp", version });
+  });
+
+  it("gives the client instructions that match the server's options", async () => {
+    expect(client.getInstructions()).toContain("gid://shopify/Product/123");
+    expect(client.getInstructions()).toContain("shopify_graphql");
+
+    const { client: readOnly } = await connect({ readOnly: true, disableRawGraphql: true });
+    expect(readOnly.getInstructions()).toContain("read-only");
+    expect(readOnly.getInstructions()).not.toContain("shopify_graphql");
   });
 
   it("registers 62 tools, each with behaviour annotations", async () => {
@@ -347,6 +380,11 @@ describe.each(toolCalls)("$tool", ({ tool, args, field, variables }) => {
     expect(fake.calls).toHaveLength(1);
     expect(fake.lastCall.query).toContain(field);
     if (variables) expect(fake.lastCall.variables).toEqual(variables);
+  });
+
+  it("reports when a list holds more items than it returned", async () => {
+    await callTool(client, tool, args);
+    expect(unreportedTruncation(fake.lastCall.query)).toEqual(singleItemConnections[tool] ?? []);
   });
 
   it("avoids operations removed or deprecated in API 2026-10", async () => {
@@ -426,6 +464,25 @@ describe("product options and collection sources", () => {
 describe("discounts", () => {
   const base = { title: "Sale", startsAt: "2030-01-01T00:00:00Z" };
 
+  it("restricts eligibility to customer segments", async () => {
+    await callTool(client, "shopify_discount_amount_off_create", {
+      ...base,
+      method: "code",
+      code: "VIP",
+      percentOff: 10,
+      customerSegmentIds: ["gid://shopify/Segment/1"],
+      productIds: [PRODUCT],
+      variantIds: ["gid://shopify/ProductVariant/1"],
+    });
+
+    const discount = fake.lastCall.variables!.discount as Record<string, unknown>;
+    expect(discount.context).toEqual({ customerSegments: { add: ["gid://shopify/Segment/1"] } });
+    expect(discount.customerGets).toEqual({
+      value: { percentage: 0.1 },
+      items: { products: { productsToAdd: [PRODUCT], productVariantsToAdd: ["gid://shopify/ProductVariant/1"] } },
+    });
+  });
+
   it("creates automatic amount-off discounts on collections with minimums and eligibility", async () => {
     await callTool(client, "shopify_discount_amount_off_create", {
       ...base,
@@ -488,6 +545,12 @@ describe("discounts", () => {
     ["two minimums", "shopify_discount_free_shipping_create", { method: "code", code: "X", minimumSubtotal: "1", minimumQuantity: 1 }, "at most one of minimumSubtotal"],
     ["buy X get Y without items", "shopify_discount_bxgy_create", { method: "code", code: "X", buys: { quantity: 1 }, gets: { quantity: 1, productIds: [PRODUCT] } }, "need productIds"],
     ["buy X get Y with quantity and amount", "shopify_discount_bxgy_create", { method: "code", code: "X", buys: { quantity: 1, amount: "5", productIds: [PRODUCT] }, gets: { quantity: 1, productIds: [PRODUCT] } }, "exactly one of quantity or amount"],
+    // Shopify's DiscountContextInput is a oneOf, so two kinds of eligibility fail the whole request
+    ["customers and markets together", "shopify_discount_amount_off_create", { method: "code", code: "X", percentOff: 10, customerIds: ["gid://shopify/Customer/1"], marketIds: ["gid://shopify/Market/1"] }, "at most one of customerIds, customerSegmentIds, or marketIds"],
+    ["segments and markets together", "shopify_discount_free_shipping_create", { method: "automatic", customerSegmentIds: ["gid://shopify/Segment/1"], marketIds: ["gid://shopify/Market/1"] }, "at most one of customerIds"],
+    ["collections with products", "shopify_discount_amount_off_create", { method: "code", code: "X", percentOff: 10, productIds: [PRODUCT], collectionIds: ["gid://shopify/Collection/1"] }, "provide either collectionIds or productIds/variantIds"],
+    ["buys mixing collections and variants", "shopify_discount_bxgy_create", { method: "code", code: "X", buys: { quantity: 1, collectionIds: ["gid://shopify/Collection/1"], variantIds: ["gid://shopify/ProductVariant/1"] }, gets: { quantity: 1, productIds: [PRODUCT] } }, "buys takes either collectionIds"],
+    ["gets mixing collections and products", "shopify_discount_bxgy_create", { method: "code", code: "X", buys: { quantity: 1, productIds: [PRODUCT] }, gets: { quantity: 1, productIds: [PRODUCT], collectionIds: ["gid://shopify/Collection/1"] } }, "gets takes either collectionIds"],
   ])("rejects %s", async (_label, tool, args, message) => {
     const result = await callTool(client, tool, { ...base, ...args });
     expect(result.isError).toBe(true);
@@ -541,6 +604,24 @@ describe("partial results", () => {
   });
 });
 
+describe("raw GraphQL", () => {
+  it("can be left out so only the selected toolsets reach the store", async () => {
+    const { client: limited } = await connect({ toolsets: ["products"], disableRawGraphql: true });
+    const names = (await limited.listTools()).tools.map((t) => t.name);
+
+    expect(names).not.toContain("shopify_graphql");
+    expect(names).toContain("shopify_schema_search");
+    expect(names).toContain("shopify_products_list");
+  });
+
+  it("reports syntax errors without calling Shopify", async () => {
+    const result = await callTool(client, "shopify_graphql", { query: "mutation {" });
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain("Syntax Error");
+    expect(fake.calls).toHaveLength(0);
+  });
+});
+
 describe("toolsets", () => {
   it("registers only the selected toolsets plus the core tools", async () => {
     const { client: limited } = await connect({ toolsets: ["themes", "markets"] });
@@ -568,6 +649,12 @@ describe("input validation", () => {
     }));
     const result = await callTool(client, "shopify_metafields_set", { metafields });
     expect(result.isError).toBe(true);
+  });
+
+  it("accepts the UNLISTED product status", async () => {
+    const result = await callTool(client, "shopify_product_update", { id: PRODUCT, status: "UNLISTED" });
+    expect(result.isError).toBeFalsy();
+    expect(fake.lastCall.variables).toEqual({ product: { id: PRODUCT, status: "UNLISTED" } });
   });
 
   it("rejects an unknown product status", async () => {
@@ -623,5 +710,82 @@ describe("schema tools", () => {
   it("reports unknown names as an error", async () => {
     const result = await callTool(client, "shopify_schema_details", { name: "Nope" });
     expect(result.isError).toBe(true);
+  });
+
+  it("rejects an empty search", async () => {
+    const result = await callTool(client, "shopify_schema_search", { query: "  " });
+    expect(result.isError).toBe(true);
+  });
+
+  it("lists the root query type's fields by name instead of describing each one", async () => {
+    const result = await callTool(client, "shopify_schema_details", { name: "QueryRoot" });
+    expect(resultText(result)).toContain("# QueryRoot (1 queries)");
+    expect(resultText(result)).toContain("shop");
+    expect(resultText(result)).not.toContain("The shop");
+  });
+
+  it("shortens descriptions on types too large to describe in full", () => {
+    const sentence = "Describes this field in detail.";
+    const index = new SchemaIndex({
+      queryTypeName: "QueryRoot",
+      mutationTypeName: "Mutation",
+      types: [
+        {
+          kind: "OBJECT",
+          name: "Huge",
+          description: null,
+          fields: Array.from({ length: 300 }, (_, i) => ({
+            name: `field${i}`,
+            description: `${sentence} ${"More context. ".repeat(10)}`,
+            args: [],
+            type: { kind: "SCALAR", name: "String" },
+          })),
+          inputFields: null,
+          interfaces: [],
+          enumValues: null,
+          possibleTypes: null,
+        },
+      ],
+    });
+
+    const details = index.getDetails("Huge")!;
+    expect(details.length).toBeLessThanOrEqual(20_000);
+    expect(details).toContain(`- field299: String — ${sentence}`);
+    expect(details).not.toContain("More context");
+  });
+
+  it("loads the schema on first use and retries after a failed load", async () => {
+    let loads = 0;
+    const load = lazySchemaIndex(async () => {
+      loads++;
+      if (loads === 1) throw new Error("Introspection failed: timeout");
+      return { queryTypeName: "QueryRoot", mutationTypeName: "Mutation", types: [] };
+    });
+    const { client: lazy } = await connect({}, load);
+
+    const failed = await callTool(lazy, "shopify_schema_search", { query: "shop" });
+    expect(failed.isError).toBe(true);
+    expect(resultText(failed)).toContain("Introspection failed");
+
+    const [first, second] = await Promise.all([
+      callTool(lazy, "shopify_schema_search", { query: "shop" }),
+      callTool(lazy, "shopify_schema_details", { name: "Nope" }),
+    ]);
+    expect(first.isError).toBeFalsy();
+    expect(second.isError).toBe(true);
+    expect(loads).toBe(2);
+  });
+
+  it("waits for the schema instead of failing while it loads", async () => {
+    let finish!: () => void;
+    const loading = new Promise<void>((resolve) => (finish = resolve));
+    const { client: lazy } = await connect({}, async () => {
+      await loading;
+      return schemaIndex;
+    });
+
+    const pending = callTool(lazy, "shopify_schema_search", { query: "shop" });
+    finish();
+    expect(resultText(await pending)).toContain("shop: Shop!");
   });
 });

@@ -70,6 +70,7 @@ export function registerCollectionTools(
             }
             metafields(first: 10) {
               nodes { namespace key value type }
+              pageInfo { hasNextPage }
             }
             updatedAt
           }

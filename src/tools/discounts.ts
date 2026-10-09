@@ -30,10 +30,18 @@ const AUTOMATIC_FRAGMENTS = `
 const CODE_PAYLOAD = `codeDiscountNode { id codeDiscount { __typename ${CODE_FRAGMENTS} } } userErrors { field code message }`;
 const AUTOMATIC_PAYLOAD = `automaticDiscountNode { id automaticDiscount { __typename ${AUTOMATIC_FRAGMENTS} } } userErrors { field code message }`;
 
-const ids = (what: string) => z.array(z.string()).min(1).optional().describe(`${what} GIDs`);
+const ids = (what: string, note?: string) =>
+  z
+    .array(z.string())
+    .min(1)
+    .optional()
+    .describe(note ? `${what} GIDs. ${note}` : `${what} GIDs`);
 const decimal = (example: string) =>
   z.string().regex(/^\d+(\.\d+)?$/, "Use a decimal string").describe(`Decimal amount as a string, e.g. "${example}"`);
 const percent = z.number().gt(0).max(100);
+
+const ONE_ELIGIBILITY = "Give at most one of customerIds, customerSegmentIds, or marketIds.";
+const ONE_ITEM_KIND = "Give collectionIds, or productIds and/or variantIds, not both.";
 
 const shared = {
   method: z
@@ -53,9 +61,9 @@ const shared = {
     })
     .optional()
     .describe("Other discount classes this discount can combine with (default: none)"),
-  customerIds: ids("Only these customers can use it: customer"),
-  customerSegmentIds: ids("Only customers in these segments can use it: segment"),
-  marketIds: ids("Only buyers in these markets can use it: market"),
+  customerIds: ids("Only these customers can use it: customer", ONE_ELIGIBILITY),
+  customerSegmentIds: ids("Only customers in these segments can use it: segment", ONE_ELIGIBILITY),
+  marketIds: ids("Only buyers in these markets can use it: market", ONE_ELIGIBILITY),
 };
 
 const minimums = {
@@ -83,13 +91,25 @@ function errorResult(message: string) {
   return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
 }
 
-// Returns a message when the method-specific fields don't fit together
-function checkMethod(input: Shared): string | null {
+// Returns a message when the fields every discount shares don't fit together
+function checkShared(input: Shared): string | null {
   if (input.method === "code" && !input.code) return "code is required when method is code";
   if (input.method === "automatic" && (input.code || input.usageLimit || input.appliesOncePerCustomer)) {
     return "automatic discounts don't take code, usageLimit, or appliesOncePerCustomer";
   }
+  // The API's context input is a oneOf: it accepts exactly one kind of buyer restriction
+  const { customerIds, customerSegmentIds, marketIds } = input;
+  if ([customerIds, customerSegmentIds, marketIds].filter(Boolean).length > 1) {
+    return "provide at most one of customerIds, customerSegmentIds, or marketIds";
+  }
   return null;
+}
+
+// Discount items are chosen either by collection or by product and variant, never both
+function checkItems({ productIds, variantIds, collectionIds }: ItemSelection, verb: string): string | null {
+  return collectionIds && (productIds || variantIds)
+    ? `${verb} either collectionIds or productIds/variantIds, not both`
+    : null;
 }
 
 function context({ customerIds, customerSegmentIds, marketIds }: Shared) {
@@ -204,22 +224,23 @@ export function registerDiscountTools(server: ToolRegistrar, client: GraphQLClie
           .boolean()
           .optional()
           .describe("Apply amountOff to each eligible item instead of once across them"),
-        productIds: ids("Discount only these products: product"),
-        variantIds: ids("Discount only these variants: variant"),
-        collectionIds: ids("Discount only products in these collections: collection"),
+        productIds: ids("Discount only these products: product", ONE_ITEM_KIND),
+        variantIds: ids("Discount only these variants: variant", ONE_ITEM_KIND),
+        collectionIds: ids("Discount only products in these collections: collection", ONE_ITEM_KIND),
         ...minimums,
       },
       annotations: WRITE,
     },
     async (input) => {
       const invalid =
-        checkMethod(input) ??
+        checkShared(input) ??
         ((input.percentOff === undefined) === (input.amountOff === undefined)
           ? "provide exactly one of percentOff or amountOff"
           : null) ??
         (input.minimumSubtotal && input.minimumQuantity
           ? "provide at most one of minimumSubtotal or minimumQuantity"
-          : null);
+          : null) ??
+        checkItems(input, "provide");
       if (invalid) return errorResult(invalid);
 
       const value =
@@ -271,7 +292,7 @@ export function registerDiscountTools(server: ToolRegistrar, client: GraphQLClie
     },
     async (input) => {
       const invalid =
-        checkMethod(input) ??
+        checkShared(input) ??
         (input.minimumSubtotal && input.minimumQuantity
           ? "provide at most one of minimumSubtotal or minimumQuantity"
           : null);
@@ -305,9 +326,9 @@ export function registerDiscountTools(server: ToolRegistrar, client: GraphQLClie
   const selection = (role: string) =>
     z
       .object({
-        productIds: ids(`${role} products: product`),
-        variantIds: ids(`${role} variants: variant`),
-        collectionIds: ids(`${role} products in collections: collection`),
+        productIds: ids(`${role} products: product`, ONE_ITEM_KIND),
+        variantIds: ids(`${role} variants: variant`, ONE_ITEM_KIND),
+        collectionIds: ids(`${role} products in collections: collection`, ONE_ITEM_KIND),
       })
       .describe(`Which items ${role.toLowerCase()} (give products, variants, or collections)`);
 
@@ -335,7 +356,7 @@ export function registerDiscountTools(server: ToolRegistrar, client: GraphQLClie
       const buysItems = items(input.buys);
       const getsItems = items(input.gets);
       const invalid =
-        checkMethod(input) ??
+        checkShared(input) ??
         ((input.buys.quantity === undefined) === (input.buys.amount === undefined)
           ? "buys needs exactly one of quantity or amount"
           : null) ??
@@ -344,7 +365,9 @@ export function registerDiscountTools(server: ToolRegistrar, client: GraphQLClie
           : null) ??
         (!buysItems || !getsItems
           ? "buys and gets each need productIds, variantIds, or collectionIds"
-          : null);
+          : null) ??
+        checkItems(input.buys, "buys takes") ??
+        checkItems(input.gets, "gets takes");
       if (invalid) return errorResult(invalid);
 
       const effect =

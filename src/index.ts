@@ -5,8 +5,10 @@ import { parseArgs } from "./utils/cli.js";
 import { AuthProvider } from "./auth/provider.js";
 import { GraphQLClient } from "./graphql/client.js";
 import { runIntrospection } from "./graphql/introspection.js";
-import { SchemaIndex } from "./graphql/schema-index.js";
+import { lazySchemaIndex } from "./graphql/schema-index.js";
 import { createServer } from "./server.js";
+
+const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 async function main() {
   const config = parseArgs(process.argv);
@@ -15,40 +17,38 @@ async function main() {
     `Connecting to ${config.store} (API ${config.apiVersion}, ${config.auth.mode === "access-token" ? "access token" : "client credentials"}${config.readOnly ? ", read-only" : ""})...`
   );
 
-  const auth = new AuthProvider(config);
+  const client = new GraphQLClient(new AuthProvider(config), config);
 
-  // Validate credentials early
+  // A small query that needs no access scopes validates the credentials and store up front
   try {
-    await auth.getAccessToken();
+    const res = await client.execute("{ shop { name } }");
+    const shop = res.data?.shop as { name: string } | null | undefined;
+    if (!shop) {
+      throw new Error(res.errors?.map((e) => e.message).join(", ") || "Shopify returned no shop");
+    }
+    console.error(`Authenticated with ${shop.name}`);
   } catch (err) {
-    console.error(
-      `Authentication failed: ${err instanceof Error ? err.message : err}`
-    );
+    console.error(`Authentication failed: ${message(err)}`);
     process.exit(1);
   }
 
-  const client = new GraphQLClient(auth, config);
-
-  console.error("Running schema introspection...");
-  let schemaIndex: SchemaIndex;
-  try {
+  // Introspection downloads the whole schema, so it runs after the server is connected
+  // instead of delaying the client's handshake
+  const loadSchemaIndex = lazySchemaIndex(async () => {
     const schema = await runIntrospection(client);
-    schemaIndex = new SchemaIndex(schema);
-    console.error(
-      `Schema loaded: ${schema.types.length} types`
-    );
-  } catch (err) {
-    console.error(
-      `Schema introspection failed: ${err instanceof Error ? err.message : err}`
-    );
-    process.exit(1);
-  }
+    console.error(`Schema loaded: ${schema.types.length} types`);
+    return schema;
+  });
 
-  const server = createServer(client, schemaIndex, config);
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-
+  const server = createServer(client, loadSchemaIndex, config);
+  await server.connect(new StdioServerTransport());
   console.error("Shopify GraphQL Admin MCP Server running");
+
+  loadSchemaIndex().catch((err) => {
+    console.error(
+      `Schema introspection failed: ${message(err)}. The schema tools will retry when they're next called.`
+    );
+  });
 }
 
 main().catch((err) => {

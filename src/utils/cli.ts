@@ -9,6 +9,7 @@ export const TOOLSETS = [
   "customers",
   "orders",
   "inventory",
+  "discounts",
   "files",
   "themes",
   "markets",

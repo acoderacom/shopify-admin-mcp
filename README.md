@@ -10,7 +10,7 @@ MCP server providing full access to Shopify's Admin GraphQL API. Targets API ver
 
 - **Raw GraphQL execution** — run any query or mutation against the Admin API
 - **Live schema introspection** — search and explore the full GraphQL schema directly from your AI assistant
-- **50 convenience tools** — typed, no-GraphQL-needed tools for products and variants, collections, publishing, metafields and metaobjects (including definitions), customers, orders, inventory, file uploads, themes, and markets
+- **59 convenience tools** — typed, no-GraphQL-needed tools for products and variants, collections, publishing, metafields and metaobjects (including definitions), customers, orders, inventory, discounts, file uploads, themes, and markets
 - **Toolsets** — register only the areas you need to keep the assistant's tool list short
 - **Read-only mode** — one flag hides every write tool and blocks mutations in raw GraphQL
 - **Tool annotations** — every tool is marked read-only, write, or destructive so MCP clients can ask before risky calls
@@ -124,6 +124,22 @@ Convenience tools are grouped into toolsets (shown in brackets), which you can s
 | `shopify_inventory_get_levels` | Get inventory levels across locations |
 | `shopify_inventory_adjust` | Adjust available quantity at a location, with a compare-and-swap check |
 
+### Discounts `[discounts]`
+
+| Tool | Description |
+|------|-------------|
+| `shopify_discounts_list` | List/search code and automatic discounts with status and summary |
+| `shopify_discount_get` | Get a discount with its codes and usage |
+| `shopify_discount_amount_off_create` | Percentage or fixed amount off the order or specific products/collections, as a code or automatic |
+| `shopify_discount_free_shipping_create` | Free shipping, optionally limited to countries or a maximum rate, as a code or automatic |
+| `shopify_discount_bxgy_create` | Buy X get Y (e.g. buy 2, get 1 free), as a code or automatic |
+| `shopify_discount_activate` | Start a discount now |
+| `shopify_discount_deactivate` | End a discount now |
+| `shopify_discount_delete` | Delete a discount |
+| `shopify_discount_codes_add` | Add up to 250 extra codes to a code discount |
+
+All create tools accept start and end dates, minimum subtotal or quantity, usage limits (codes only), which other discounts they combine with, and eligibility by customer, customer segment, or market. Percentages are given as whole numbers (`20` = 20% off).
+
 ### Files `[files]`
 
 | Tool | Description |
@@ -186,7 +202,7 @@ All toolsets are registered by default. To keep the assistant's tool list short,
 --toolsets products,collections,publishing,files
 ```
 
-Available toolsets: `products`, `collections`, `publishing`, `metafields`, `metaobjects`, `customers`, `orders`, `inventory`, `files`, `themes`, `markets`. Raw GraphQL and schema search are always available.
+Available toolsets: `products`, `collections`, `publishing`, `metafields`, `metaobjects`, `customers`, `orders`, `inventory`, `discounts`, `files`, `themes`, `markets`. Raw GraphQL and schema search are always available.
 
 ## File Uploads
 
@@ -218,6 +234,7 @@ Configure these scopes on your app to enable all tools:
 | `read_customers`, `write_customers` | Customers |
 | `read_orders` | Orders (last 60 days; add `read_all_orders` for older orders) |
 | `read_inventory`, `write_inventory`, `read_locations` | Inventory |
+| `read_discounts`, `write_discounts` | Discounts |
 | `read_files`, `write_files` | Files |
 | `read_themes`, `write_themes` (+ theme-code exemption for writes) | Themes |
 | `read_markets`, `write_markets` | Markets |
@@ -426,7 +443,7 @@ Every flag at once, with client credentials:
   "--client-id", "your_client_id",
   "--client-secret", "your_client_secret",
   "--api-version", "2026-10",
-  "--toolsets", "products,collections,publishing,metafields,metaobjects,customers,orders,inventory,files,themes,markets",
+  "--toolsets", "products,collections,publishing,metafields,metaobjects,customers,orders,inventory,discounts,files,themes,markets",
   "--upload-dir", "/Users/you/shopify-uploads",
   "--allow-live-theme-writes",
   "--read-only"
@@ -466,7 +483,7 @@ Every variable at once, with client credentials:
         "SHOPIFY_CLIENT_ID": "${SHOPIFY_CLIENT_ID}",
         "SHOPIFY_CLIENT_SECRET": "${SHOPIFY_CLIENT_SECRET}",
         "SHOPIFY_API_VERSION": "2026-10",
-        "SHOPIFY_TOOLSETS": "products,collections,publishing,metafields,metaobjects,customers,orders,inventory,files,themes,markets",
+        "SHOPIFY_TOOLSETS": "products,collections,publishing,metafields,metaobjects,customers,orders,inventory,discounts,files,themes,markets",
         "SHOPIFY_UPLOAD_DIR": "/Users/you/shopify-uploads",
         "SHOPIFY_READ_ONLY": "false",
         "SHOPIFY_ALLOW_LIVE_THEME_WRITES": "false"
@@ -532,7 +549,7 @@ SHOPIFY_ACCESS_TOKEN=shpat_xxxxx \
 npm test
 ```
 
-Add `SHOPIFY_TEST_WRITES=1` to also run the write tests. They create `[MCP test]` products, variants, collections, files, metafield and metaobject definitions, customers, a duplicate of the live theme, and a draft market, run every write tool against them, and delete them afterwards. The live theme itself is only read. Only run write tests against a development store.
+Add `SHOPIFY_TEST_WRITES=1` to also run the write tests. They create `[MCP test]` products, variants, collections, files, metafield and metaobject definitions, customers, a duplicate of the live theme, a draft market, and discounts scheduled a year ahead (so they never apply to real carts), run every write tool against them, and delete them afterwards. The live theme itself is only read. Only run write tests against a development store.
 
 ## Contributing and Releases
 

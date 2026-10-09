@@ -6,7 +6,7 @@ describe("read-only mode", () => {
     const { client } = await connect({ readOnly: true });
     const { tools } = await client.listTools();
 
-    expect(tools).toHaveLength(24);
+    expect(tools).toHaveLength(26);
     expect(tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
     expect(tools.map((t) => t.name)).not.toContain("shopify_product_delete");
   });

@@ -14,6 +14,7 @@ import { registerMetafieldTools } from "./tools/metafields.js";
 import { registerCustomerTools } from "./tools/customers.js";
 import { registerOrderTools } from "./tools/orders.js";
 import { registerInventoryTools } from "./tools/inventory.js";
+import { registerDiscountTools } from "./tools/discounts.js";
 import { registerFileTools } from "./tools/files.js";
 import { registerThemeTools } from "./tools/themes.js";
 import { registerMarketTools } from "./tools/markets.js";
@@ -39,6 +40,7 @@ const toolsetRegistrations: Record<Toolset, RegisterToolset> = {
   customers: registerCustomerTools,
   orders: registerOrderTools,
   inventory: registerInventoryTools,
+  discounts: registerDiscountTools,
   files: registerFileTools,
   themes: registerThemeTools,
   markets: registerMarketTools,

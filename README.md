@@ -1,5 +1,9 @@
 # shopify-admin-mcp
 
+[![npm](https://img.shields.io/npm/v/@acodera/shopify-admin-mcp)](https://www.npmjs.com/package/@acodera/shopify-admin-mcp)
+[![CI](https://github.com/acoderacom/shopify-admin-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/acoderacom/shopify-admin-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 MCP server providing full access to Shopify's Admin GraphQL API. Targets API version **2026-10** by default and introspects the live schema on startup, so your AI assistant always sees the exact API your store is serving.
 
 ## Features
@@ -22,13 +26,13 @@ Credentials are read from environment variables, which keeps them out of process
 # With a legacy access token
 SHOPIFY_STORE=mystore.myshopify.com \
 SHOPIFY_ACCESS_TOKEN=shpat_xxxxx \
-npx -y @acoderacom/shopify-admin-mcp
+npx -y @acodera/shopify-admin-mcp
 
 # With OAuth client credentials (Dev Dashboard app)
 SHOPIFY_STORE=mystore.myshopify.com \
 SHOPIFY_CLIENT_ID=your_client_id \
 SHOPIFY_CLIENT_SECRET=your_client_secret \
-npx -y @acoderacom/shopify-admin-mcp
+npx -y @acodera/shopify-admin-mcp
 ```
 
 Add `--read-only` (or `SHOPIFY_READ_ONLY=true`) when the assistant only needs to look at store data.
@@ -235,7 +239,7 @@ For apps created in the [Shopify Dev Dashboard](https://dev.shopify.com/dashboar
 SHOPIFY_STORE=mystore.myshopify.com \
 SHOPIFY_CLIENT_ID=your_client_id \
 SHOPIFY_CLIENT_SECRET=your_client_secret \
-npx -y @acoderacom/shopify-admin-mcp
+npx -y @acodera/shopify-admin-mcp
 ```
 
 The client credentials grant only works when the app and the store belong to the same Shopify organization. Tokens last 24 hours and are refreshed automatically.
@@ -247,7 +251,7 @@ For existing custom apps with a `shpat_` token:
 ```bash
 SHOPIFY_STORE=mystore.myshopify.com \
 SHOPIFY_ACCESS_TOKEN=shpat_xxxxx \
-npx -y @acoderacom/shopify-admin-mcp
+npx -y @acodera/shopify-admin-mcp
 ```
 
 ## Configuration
@@ -272,7 +276,7 @@ The store must be a `*.myshopify.com` domain, so credentials are only ever sent 
 claude mcp add shopify \
   -e SHOPIFY_STORE=mystore.myshopify.com \
   -e SHOPIFY_ACCESS_TOKEN=shpat_xxxxx \
-  -- npx -y @acoderacom/shopify-admin-mcp
+  -- npx -y @acodera/shopify-admin-mcp
 ```
 
 Or add it to your project's `.mcp.json`:
@@ -282,7 +286,7 @@ Or add it to your project's `.mcp.json`:
   "mcpServers": {
     "shopify": {
       "command": "npx",
-      "args": ["-y", "@acoderacom/shopify-admin-mcp"],
+      "args": ["-y", "@acodera/shopify-admin-mcp"],
       "env": {
         "SHOPIFY_STORE": "mystore.myshopify.com",
         "SHOPIFY_ACCESS_TOKEN": "shpat_xxxxx"
@@ -303,7 +307,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
   "mcpServers": {
     "shopify": {
       "command": "npx",
-      "args": ["-y", "@acoderacom/shopify-admin-mcp"],
+      "args": ["-y", "@acodera/shopify-admin-mcp"],
       "env": {
         "SHOPIFY_STORE": "mystore.myshopify.com",
         "SHOPIFY_ACCESS_TOKEN": "shpat_xxxxx"
@@ -313,7 +317,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 }
 ```
 
-If you install the package globally (`npm install -g @acoderacom/shopify-admin-mcp`), you can use `"command": "shopify-admin-mcp"` with no `args`.
+If you install the package globally (`npm install -g @acodera/shopify-admin-mcp`), you can use `"command": "shopify-admin-mcp"` with no `args`.
 
 ## Schema Exploration
 
@@ -336,6 +340,7 @@ Deprecated fields are left out of the index, so the assistant is steered toward 
 ```bash
 git clone https://github.com/acoderacom/shopify-admin-mcp.git
 cd shopify-admin-mcp
+git checkout dev
 npm install
 npm run build
 npm run dev  # watch mode
@@ -361,6 +366,22 @@ npm test
 ```
 
 Add `SHOPIFY_TEST_WRITES=1` to also run the write tests. They create `[MCP test]` products, variants, collections, files, metafield and metaobject definitions, customers, a duplicate of the live theme, and a draft market, run every write tool against them, and delete them afterwards. The live theme itself is only read. Only run write tests against a development store.
+
+## Contributing and Releases
+
+Work happens on the `dev` branch; `main` holds what's been released.
+
+1. Branch from `dev`, make your change, and add a changeset describing it:
+
+   ```bash
+   npx changeset
+   ```
+
+   Pick `patch` for fixes, `minor` for new tools or options, and `major` for breaking changes to tool inputs or behaviour. Changes that don't affect the published package (tests, docs, CI) don't need one.
+
+2. Open a pull request into `dev`. CI type-checks, tests, and builds on Node.js 22 and 24, and a bot comments on whether the pull request has a changeset.
+3. To release, open a pull request from `dev` into `main` and merge it. The release workflow turns the pending changesets into a **Version Packages** pull request that bumps the version and updates [CHANGELOG.md](CHANGELOG.md).
+4. Merge the Version Packages pull request. The workflow publishes to npm through [trusted publishing](https://docs.npmjs.com/trusted-publishers) (no npm token is stored in GitHub), with provenance, and creates a GitHub release.
 
 ## License
 

@@ -1,7 +1,0 @@
-src/
-tsconfig.json
-.git
-.github
-node_modules
-*.ts
-!dist/**/*.d.ts

@@ -97,6 +97,19 @@ describe("shopify_file_upload from a local path", () => {
     expect(fake.calls.some((c) => c.query.includes("fileUpdate("))).toBe(false);
   });
 
+  it("reports Shopify's reason when it won't stage the upload", async () => {
+    const { client, fake } = await connect({ uploadDir });
+    fake.responses.push({
+      data: { stagedUploadsCreate: { stagedTargets: null, userErrors: [{ field: ["input"], message: "File size is too large" }] } },
+    });
+
+    const result = await callTool(client, "shopify_file_upload", { path: "logo.png" });
+
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain("File size is too large");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("is disabled without an upload directory", async () => {
     const { client, fake } = await connect();
     const result = await callTool(client, "shopify_file_upload", { path: path.join(uploadDir, "logo.png") });

@@ -9,6 +9,7 @@ import {
   toolResult,
   type ToolRegistrar,
 } from "./shared.js";
+import { liveThemeGuard } from "./theme-guard.js";
 
 const THEME_ROLES = ["MAIN", "UNPUBLISHED", "DEVELOPMENT", "DEMO", "ARCHIVED", "LOCKED"] as const;
 
@@ -34,24 +35,6 @@ function errorResult(message: string) {
   return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
 }
 
-// Editing the published theme changes the live storefront immediately, so writes go to
-// a duplicate unless the server was started with --allow-live-theme-writes
-async function liveThemeGuard(
-  client: GraphQLClient,
-  themeId: string,
-  options: ServerOptions
-): Promise<string | null> {
-  const res = await client.execute(`query ($id: ID!) { theme(id: $id) { id name role } }`, {
-    id: themeId,
-  });
-  const theme = res.data?.theme as { name: string; role: string } | null | undefined;
-  if (!theme) return `Theme ${themeId} not found`;
-  if (theme.role === "MAIN" && !options.allowLiveThemeWrites) {
-    return `"${theme.name}" is the live theme. Duplicate it with shopify_theme_duplicate, edit the copy, and publish it from the Shopify admin. To edit the live theme directly, restart the server with --allow-live-theme-writes.`;
-  }
-  return null;
-}
-
 export function registerThemeTools(
   server: ToolRegistrar,
   client: GraphQLClient,
@@ -71,6 +54,7 @@ export function registerThemeTools(
         `query ($roles: [ThemeRole!]) {
           themes(first: 50, roles: $roles) {
             nodes { id name role processing processingFailed themeStoreId createdAt updatedAt }
+            pageInfo { hasNextPage }
           }
         }`,
         { roles }
@@ -114,7 +98,8 @@ export function registerThemeTools(
   server.registerTool(
     "shopify_theme_files_get",
     {
-      description: "Read the content of specific theme files (text files return content, binary files return base64 or a URL)",
+      description:
+        "Read the content of specific theme files (text files return content, binary files return base64 or a URL). Up to 50 files are returned; pageInfo.hasNextPage shows when a pattern matched more.",
       inputSchema: {
         themeId: z.string().describe("Theme GID"),
         filenames: z
@@ -139,13 +124,17 @@ export function registerThemeTools(
                   ... on OnlineStoreThemeFileBodyUrl { url }
                 }
               }
+              pageInfo { hasNextPage }
               userErrors { code filename }
             }
           }
         }`,
         { id: themeId, filenames }
       );
-      return toolResult(result);
+      // Files that can't be read are reported on the connection rather than a mutation payload
+      const files = (result.data?.theme as { files?: { userErrors?: unknown[] } } | null | undefined)?.files;
+      const response = toolResult(result);
+      return files?.userErrors?.length ? { ...response, isError: true } : response;
     }
   );
 
@@ -161,7 +150,7 @@ export function registerThemeTools(
       annotations: WRITE,
     },
     async ({ themeId, files }) => {
-      const blocked = await liveThemeGuard(client, themeId, options);
+      const blocked = await liveThemeGuard(client, themeId, options.allowLiveThemeWrites);
       if (blocked) return errorResult(blocked);
 
       const result = await client.execute(
@@ -189,7 +178,7 @@ export function registerThemeTools(
       annotations: DESTRUCTIVE,
     },
     async ({ themeId, filenames }) => {
-      const blocked = await liveThemeGuard(client, themeId, options);
+      const blocked = await liveThemeGuard(client, themeId, options.allowLiveThemeWrites);
       if (blocked) return errorResult(blocked);
 
       const result = await client.execute(

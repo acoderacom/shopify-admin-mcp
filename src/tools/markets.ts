@@ -13,11 +13,14 @@ const MARKET_FIELDS = `
   id name handle status type
   conditions {
     conditionTypes
-    regionsCondition { regions(first: 250) { nodes { id name ... on MarketRegionCountry { code } } } }
+    regionsCondition {
+      regions(first: 250) { nodes { id name ... on MarketRegionCountry { code } } pageInfo { hasNextPage } }
+    }
   }
   currencySettings { baseCurrency { currencyCode currencyName } localCurrencies roundingEnabled }
   webPresences(first: 10) {
     nodes { id subfolderSuffix domain { host } defaultLocale { locale } alternateLocales { locale } }
+    pageInfo { hasNextPage }
   }
 `;
 
@@ -80,6 +83,7 @@ export function registerMarketTools(server: ToolRegistrar, client: GraphQLClient
             ${MARKET_FIELDS}
             catalogs(first: 10) {
               nodes { id title status priceList { id name currency } publication { id } }
+              pageInfo { hasNextPage }
             }
           }
         }`,

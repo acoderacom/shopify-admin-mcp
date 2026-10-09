@@ -4,11 +4,11 @@
 [![CI](https://github.com/acoderacom/shopify-admin-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/acoderacom/shopify-admin-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-MCP server providing full access to Shopify's Admin GraphQL API. Targets API version **2026-10** by default and introspects the live schema on startup, so your AI assistant always sees the exact API your store is serving.
+MCP server providing full access to Shopify's Admin GraphQL API. Targets API version **2026-10** by default and introspects the live schema as soon as it starts, so your AI assistant always sees the exact API your store is serving.
 
 ## Features
 
-- **Raw GraphQL execution** — run any query or mutation against the Admin API
+- **Raw GraphQL execution** — run any query or mutation against the Admin API, or turn it off with `--disable-raw-graphql`
 - **Live schema introspection** — search and explore the full GraphQL schema directly from your AI assistant
 - **59 convenience tools** — typed, no-GraphQL-needed tools for products and variants, collections, publishing, metafields and metaobjects (including definitions), customers, orders, inventory, discounts, file uploads, themes, and markets
 - **Toolsets** — register only the areas you need to keep the assistant's tool list short
@@ -43,7 +43,7 @@ Add `--read-only` (or `SHOPIFY_READ_ONLY=true`) when the assistant only needs to
 
 | Tool | Description |
 |------|-------------|
-| `shopify_graphql` | Execute any raw GraphQL query or mutation (queries only in read-only mode) |
+| `shopify_graphql` | Execute any raw GraphQL query or mutation (queries only in read-only mode; left out with `--disable-raw-graphql`) |
 | `shopify_schema_search` | Search the live schema by keyword (types, queries, mutations) |
 | `shopify_schema_details` | Get full details for a specific type, query, or mutation |
 
@@ -138,7 +138,7 @@ Convenience tools are grouped into toolsets (shown in brackets), which you can s
 | `shopify_discount_delete` | Delete a discount |
 | `shopify_discount_codes_add` | Add up to 250 extra codes to a code discount |
 
-All create tools accept start and end dates, minimum subtotal or quantity, usage limits (codes only), which other discounts they combine with, and eligibility by customer, customer segment, or market. Percentages are given as whole numbers (`20` = 20% off).
+All create tools accept start and end dates, minimum subtotal or quantity, usage limits (codes only), which other discounts they combine with, and eligibility by customer, customer segment, or market. Shopify takes one kind of eligibility per discount, so give at most one of `customerIds`, `customerSegmentIds`, or `marketIds`. Discounted items are chosen by collection or by product and variant, not both. Percentages are given as whole numbers (`20` = 20% off).
 
 ### Files `[files]`
 
@@ -202,7 +202,9 @@ All toolsets are registered by default. To keep the assistant's tool list short,
 --toolsets products,collections,publishing,files
 ```
 
-Available toolsets: `products`, `collections`, `publishing`, `metafields`, `metaobjects`, `customers`, `orders`, `inventory`, `discounts`, `files`, `themes`, `markets`. Raw GraphQL and schema search are always available.
+Available toolsets: `products`, `collections`, `publishing`, `metafields`, `metaobjects`, `customers`, `orders`, `inventory`, `discounts`, `files`, `themes`, `markets`. Schema search is always available, and so is raw GraphQL unless you turn it off.
+
+Toolsets shorten the tool list, but `shopify_graphql` can still run any query or mutation the app's access scopes allow. To keep the assistant to the selected toolsets, add `--disable-raw-graphql` (or `SHOPIFY_DISABLE_RAW_GRAPHQL=true`). Either way, the app's access scopes are what actually limit what the server can do, so grant only the scopes you need.
 
 ## File Uploads
 
@@ -218,7 +220,9 @@ Theme file tools read any theme, but by default they refuse to write to or delet
 2. edit the copy with `shopify_theme_files_upsert`
 3. preview and publish it from the Shopify admin
 
-Start the server with `--allow-live-theme-writes` (or `SHOPIFY_ALLOW_LIVE_THEME_WRITES=true`) to edit the live theme directly. Writing theme files needs `write_themes` and Shopify's theme-code exemption on the app.
+`shopify_graphql` applies the same guard: `themeFilesUpsert`, `themeFilesDelete`, and `themeFilesCopy` are checked against the theme they target, and `themePublish` is refused, because publishing replaces the live theme.
+
+Start the server with `--allow-live-theme-writes` (or `SHOPIFY_ALLOW_LIVE_THEME_WRITES=true`) to edit or publish the live theme directly. Writing theme files needs `write_themes` and Shopify's theme-code exemption on the app.
 
 ## Required API Scopes
 
@@ -283,7 +287,8 @@ npx -y @acodera/shopify-admin-mcp
 | `--read-only` | `SHOPIFY_READ_ONLY` | Expose only read tools and block mutations (`true` / `1`) |
 | `--toolsets` | `SHOPIFY_TOOLSETS` | Comma-separated toolsets to register (default: all) |
 | `--upload-dir` | `SHOPIFY_UPLOAD_DIR` | Directory that local file uploads are confined to (default: local uploads disabled) |
-| `--allow-live-theme-writes` | `SHOPIFY_ALLOW_LIVE_THEME_WRITES` | Allow theme file writes and deletes on the live theme (`true` / `1`) |
+| `--allow-live-theme-writes` | `SHOPIFY_ALLOW_LIVE_THEME_WRITES` | Allow theme file writes and deletes on the live theme, and publishing themes through raw GraphQL (`true` / `1`) |
+| `--disable-raw-graphql` | `SHOPIFY_DISABLE_RAW_GRAPHQL` | Leave out `shopify_graphql`, so only the selected toolsets can reach the store (`true` / `1`) |
 
 The store must be a `*.myshopify.com` domain, so credentials are only ever sent to Shopify. Secrets can still be passed as flags, but the server prints a warning because flags are visible to other processes on the machine.
 
@@ -446,6 +451,7 @@ Every flag at once, with client credentials:
   "--toolsets", "products,collections,publishing,metafields,metaobjects,customers,orders,inventory,discounts,files,themes,markets",
   "--upload-dir", "/Users/you/shopify-uploads",
   "--allow-live-theme-writes",
+  "--disable-raw-graphql",
   "--read-only"
 ]
 ```
@@ -469,6 +475,7 @@ Every flag has an environment variable, which you can put in `env` instead of `a
 | `--upload-dir` | `SHOPIFY_UPLOAD_DIR` | Absolute folder path | local uploads disabled |
 | `--read-only` | `SHOPIFY_READ_ONLY` | `true` or `1` turns it on | off |
 | `--allow-live-theme-writes` | `SHOPIFY_ALLOW_LIVE_THEME_WRITES` | `true` or `1` turns it on | off |
+| `--disable-raw-graphql` | `SHOPIFY_DISABLE_RAW_GRAPHQL` | `true` or `1` turns it on | off |
 
 Every variable at once, with client credentials:
 
@@ -486,7 +493,8 @@ Every variable at once, with client credentials:
         "SHOPIFY_TOOLSETS": "products,collections,publishing,metafields,metaobjects,customers,orders,inventory,discounts,files,themes,markets",
         "SHOPIFY_UPLOAD_DIR": "/Users/you/shopify-uploads",
         "SHOPIFY_READ_ONLY": "false",
-        "SHOPIFY_ALLOW_LIVE_THEME_WRITES": "false"
+        "SHOPIFY_ALLOW_LIVE_THEME_WRITES": "false",
+        "SHOPIFY_DISABLE_RAW_GRAPHQL": "false"
       }
     }
   }
@@ -511,14 +519,14 @@ The startup log on stderr says which method was used, for example `Connecting to
 If you set the same option both ways:
 
 - For options that take a value (`--store`, credentials, `--api-version`, `--toolsets`, `--upload-dir`), the flag wins.
-- For on/off options (`--read-only`, `--allow-live-theme-writes`), either one turns it on. Setting the variable to `"false"` doesn't turn off a flag that's present.
+- For on/off options (`--read-only`, `--allow-live-theme-writes`, `--disable-raw-graphql`), either one turns it on. Setting the variable to `"false"` doesn't turn off a flag that's present.
 - If both an access token and client credentials are set, the access token is used.
 
 Use an absolute path for `--upload-dir`, because MCP clients start the server from their own working directory, not your project's.
 
 ## Schema Exploration
 
-The server introspects Shopify's live GraphQL schema on startup, so your AI assistant can discover API capabilities in real time.
+The server introspects Shopify's live GraphQL schema once it has connected, so your AI assistant can discover API capabilities in real time. Introspection runs in the background, so it doesn't delay the client's connection; a schema tool called before it finishes waits for it, and a failed introspection is retried on the next call.
 
 ```
 You: "What mutations are available for metaobjects?"
@@ -530,7 +538,7 @@ You: "What fields does MetaobjectCreateInput take?"
 → Returns: full type definition with all fields, types, and descriptions
 ```
 
-Deprecated fields are left out of the index, so the assistant is steered toward the current API.
+Deprecated fields are left out of the index, so the assistant is steered toward the current API. `shopify_schema_details` on the root `QueryRoot` or `Mutation` type lists the names of every query or mutation, and very large types have their descriptions shortened so the response stays readable.
 
 ## Development
 
@@ -552,7 +560,7 @@ npm test       # unit tests; live tests are skipped without credentials
 npm run lint   # type-check src and tests
 ```
 
-The unit tests need no network. They cover CLI validation, the HTTP client (throttle retry, token refresh), every tool's request over a real MCP connection, read-only mode, toolsets, the live-theme guard, and upload-directory confinement.
+The unit tests need no network. They cover CLI validation, the HTTP client (throttle and `Retry-After` handling, token refresh), every tool's request over a real MCP connection, read-only mode, toolsets, the live-theme guard (including raw GraphQL), and upload-directory confinement.
 
 Live integration tests run against a real store when credentials are set:
 

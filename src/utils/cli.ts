@@ -26,6 +26,8 @@ export interface Config {
   /** Directory that local file uploads are confined to; undefined disables local uploads. */
   uploadDir?: string;
   allowLiveThemeWrites: boolean;
+  /** Leaves out shopify_graphql so the selected toolsets are the only way to reach the store. */
+  disableRawGraphql: boolean;
   auth:
     | { mode: "access-token"; accessToken: string }
     | { mode: "client-credentials"; clientId: string; clientSecret: string };
@@ -136,6 +138,7 @@ export function parseArgs(argv: string[]): Config {
       "--allow-live-theme-writes",
       "SHOPIFY_ALLOW_LIVE_THEME_WRITES"
     ),
+    disableRawGraphql: getFlag(argv, "--disable-raw-graphql", "SHOPIFY_DISABLE_RAW_GRAPHQL"),
   };
 
   if (accessToken) {

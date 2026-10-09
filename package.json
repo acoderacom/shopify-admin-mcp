@@ -4,7 +4,7 @@
   "description": "MCP server providing full access to Shopify's Admin GraphQL API with schema introspection",
   "type": "module",
   "bin": {
-    "shopify-admin-mcp": "./dist/index.js"
+    "shopify-admin-mcp": "dist/index.js"
   },
   "main": "./dist/index.js",
   "files": [

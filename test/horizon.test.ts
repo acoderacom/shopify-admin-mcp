@@ -2,41 +2,9 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { downloadHorizon, listHorizonVersions, readTar, type HorizonVersion } from "../src/setup/horizon.js";
-
-// Builds tar archives the way git archive does: ustar headers, plus pax headers where needed
-function header(name: string, size: number, type: string, prefix = ""): Buffer {
-  const block = Buffer.alloc(512);
-  block.write(name, 0, 100);
-  block.write("0000644\0", 100);
-  block.write("0000000\0", 108);
-  block.write("0000000\0", 116);
-  block.write(`${size.toString(8).padStart(11, "0")}\0`, 124);
-  block.write("00000000000\0", 136);
-  block.fill(0x20, 148, 156);
-  block.write(type, 156);
-  block.write("ustar\u000000", 257);
-  block.write(prefix, 345, 155);
-  const sum = block.reduce((total, byte) => total + byte, 0);
-  block.write(`${sum.toString(8).padStart(6, "0")}\0 `, 148);
-  return block;
-}
-
-function entry(name: string, content: string | Buffer, type = "0", prefix = ""): Buffer {
-  const data = Buffer.from(content);
-  return Buffer.concat([header(name, data.length, type, prefix), data, Buffer.alloc((512 - (data.length % 512)) % 512)]);
-}
-
-function paxPath(value: string): Buffer {
-  const body = ` path=${value}\n`;
-  let length = body.length + 1;
-  while (String(length).length + body.length !== length) length++;
-  return entry("PaxHeader", `${length}${body}`, "x");
-}
-
-const tar = (...entries: Buffer[]) => Buffer.concat([...entries, Buffer.alloc(1024)]);
+import { downloadHorizon, listHorizonVersions, type HorizonVersion } from "../src/setup/horizon.js";
+import { entry, gzipped, tar } from "./tar-helpers.js";
 
 const HORIZON: HorizonVersion = { version: "4.2.0", sha: "abc123", date: "2026-09-18T16:47:43Z" };
 
@@ -78,38 +46,6 @@ describe("listHorizonVersions", () => {
   });
 });
 
-describe("readTar", () => {
-  it("reads regular files, with long paths from ustar prefixes and pax headers", () => {
-    const longName = `snippets/${"a".repeat(120)}.liquid`;
-    const files = readTar(
-      tar(
-        entry("pax_global_header", "52 comment=abc123\n", "g"),
-        entry("horizon-abc/", "", "5"),
-        entry("horizon-abc/layout/theme.liquid", "<html></html>"),
-        entry("gift-card-recipient.liquid", "{{ gift }}", "0", "horizon-abc/snippets"),
-        paxPath(`horizon-abc/${longName}`),
-        entry("horizon-abc/snippets/aaaa", "long"),
-        entry("horizon-abc/link", "", "2")
-      )
-    );
-
-    expect(files.map((file) => [file.path, file.data.toString()])).toEqual([
-      ["horizon-abc/layout/theme.liquid", "<html></html>"],
-      ["horizon-abc/snippets/gift-card-recipient.liquid", "{{ gift }}"],
-      [`horizon-abc/${longName}`, "long"],
-    ]);
-  });
-
-  it("rejects a damaged or cut-off archive", () => {
-    const archive = tar(entry("horizon-abc/layout/theme.liquid", "<html></html>"));
-    const damaged = Buffer.from(archive);
-    damaged[10] = 0x41;
-
-    expect(() => readTar(damaged)).toThrow("The archive is damaged");
-    expect(() => readTar(archive.subarray(0, 700))).toThrow("The archive ended early");
-  });
-});
-
 describe("downloadHorizon", () => {
   let dir: string;
 
@@ -122,7 +58,7 @@ describe("downloadHorizon", () => {
   });
 
   const serve = (archive: Buffer) => {
-    const fetchMock = vi.fn<typeof fetch>(async () => new Response(gzipSync(archive)));
+    const fetchMock = vi.fn<typeof fetch>(async () => gzipped(archive));
     vi.stubGlobal("fetch", fetchMock);
     return fetchMock;
   };

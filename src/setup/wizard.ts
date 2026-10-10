@@ -14,7 +14,8 @@ import {
 } from "./mcp-config.js";
 import { THEME_DIR, type DownloadResult, type HorizonVersion } from "./horizon.js";
 import type { NodeCheck } from "./node-version.js";
-import type { VerifyResult } from "./verify.js";
+import { docsVersionFor, type ProjectDetails, type ProjectDocsInput, type ProjectDocsResult } from "./template.js";
+import type { StoreInfo, VerifyResult } from "./verify.js";
 
 export type SetupOutcome = "saved" | "cancelled" | "failed";
 
@@ -30,6 +31,9 @@ export interface WizardOptions {
   listHorizonVersions: () => Promise<HorizonVersion[]>;
   /** Downloads Horizon into the theme folder, replacing what's there. */
   downloadHorizon: (horizon: HorizonVersion) => Promise<DownloadResult>;
+  /** Lists the Horizon versions the project docs cover. */
+  listDocsVersions: () => Promise<string[]>;
+  writeProjectDocs: (input: ProjectDocsInput) => Promise<ProjectDocsResult>;
   /** Streams the prompts use instead of the terminal, for tests. */
   input?: Readable;
   output?: Writable;
@@ -45,10 +49,13 @@ const AUTH_LABELS: Record<AuthAnswers["mode"], string> = {
 
 class Cancelled extends Error {}
 
-interface HorizonAnswer {
+interface ProjectAnswer {
   horizon: HorizonVersion;
-  /** Whether the theme folder already has files that the download replaces. */
+  /** The Horizon version whose docs are used. */
+  docsVersion: string;
+  /** Whether the theme folder has files or THEME.md exists, which the project replaces. */
   replace: boolean;
+  storefrontPassword?: string;
 }
 
 const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -244,58 +251,116 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     };
   };
 
-  const askHorizon = async (): Promise<HorizonAnswer | undefined> => {
+  // Describes the live theme, which CLAUDE.md says Claude edits
+  const describeLiveTheme = (info: StoreInfo | undefined) => {
+    if (!info) return;
+    const live = info.liveTheme;
+    if (live?.themeName === "Horizon") {
+      p.log.info(`The live theme is Horizon ${live.version ?? "(version unknown)"}, "${live.name}".`, io);
+    } else if (live) {
+      p.log.warn(
+        `The live theme is "${live.name}", not Horizon. CLAUDE.md expects a live Horizon theme, so its live theme line is left for you to fill in.`,
+        io
+      );
+    } else {
+      p.log.warn(
+        `Couldn't read the live theme (${info.liveThemeError ?? "no reason given"}), so CLAUDE.md's live theme line is left for you to fill in. The app needs the read_themes scope.`,
+        io
+      );
+    }
+  };
+
+  // A Horizon project: the theme from Shopify, and CLAUDE.md, THEME.md and customizations.md from the template
+  const askProject = async (info: StoreInfo | undefined): Promise<ProjectAnswer | undefined> => {
     const themeDir = path.join(cwd, THEME_DIR);
     const kind = pathKind(themeDir);
     if (kind === "file") {
-      p.log.warn(`${themeDir} is a file, so setup can't download the Horizon theme there.`, io);
+      p.log.warn(`${themeDir} is a file, so setup can't set up a Horizon theme project here.`, io);
       return undefined;
     }
     const wanted = await ask(
-      p.confirm({ ...io, message: `Download Shopify's Horizon theme into ./${THEME_DIR}?`, initialValue: false })
+      p.confirm({
+        ...io,
+        message: `Set up a Horizon theme project here? (./${THEME_DIR} from Shopify, plus CLAUDE.md, THEME.md and customizations.md)`,
+        initialValue: false,
+      })
     );
     if (!wanted) return undefined;
+    describeLiveTheme(info);
 
     const listing = p.spinner(io);
     listing.start("Getting Horizon versions from GitHub");
-    let versions: HorizonVersion[];
-    try {
-      versions = await options.listHorizonVersions();
-      if (versions.length === 0) throw new Error("GitHub listed none");
-    } catch (err) {
-      listing.error(`Couldn't get Horizon versions: ${errorMessage(err)}. Run setup again to retry.`);
+    const [themes, docs] = await Promise.allSettled([options.listHorizonVersions(), options.listDocsVersions()]);
+    const versions = themes.status === "fulfilled" ? themes.value : [];
+    if (versions.length === 0) {
+      const reason = themes.status === "rejected" ? errorMessage(themes.reason) : "GitHub listed none";
+      listing.error(`Couldn't get Horizon versions: ${reason}. Run setup again to retry.`);
       return undefined;
     }
     listing.stop(`Found ${versions.length} Horizon versions`);
+    const docsVersions = docs.status === "fulfilled" ? docs.value : [];
+    if (docs.status === "rejected") p.log.warn(`Couldn't list the project docs: ${errorMessage(docs.reason)}`, io);
 
+    const liveVersion = info?.liveTheme?.themeName === "Horizon" ? info.liveTheme.version : undefined;
     const picked = await ask(
       p.select({
         ...io,
         message: "Which Horizon version?",
         maxItems: 8,
+        initialValue: versions.some((horizon) => horizon.version === liveVersion) ? liveVersion : versions[0]!.version,
         options: versions.map((horizon, i) => ({
           value: horizon.version,
           label: `v${horizon.version}`,
-          hint: [i === 0 ? "latest" : "", releaseDate(horizon.date)].filter(Boolean).join(", "),
+          hint: [i === 0 ? "latest" : "", horizon.version === liveVersion ? "live theme" : "", releaseDate(horizon.date)]
+            .filter(Boolean)
+            .join(", "),
         })),
       })
     );
     const horizon = versions.find((candidate) => candidate.version === picked)!;
+    if (liveVersion && liveVersion !== horizon.version) {
+      p.log.warn(`The live theme is Horizon ${liveVersion}, so ./${THEME_DIR} won't match it.`, io);
+    }
+    // Without a docs listing, the version's own tag is tried
+    const docsVersion = docsVersionFor(horizon.version, docsVersions) ?? horizon.version;
+    if (docsVersion !== horizon.version) {
+      p.log.warn(
+        `There's no THEME.md for Horizon ${horizon.version} yet, so the one for ${docsVersion} is used. Claude checks what it relies on against the theme (THEME.md §0.1).`,
+        io
+      );
+    }
 
-    const replace = kind === "folder" && readdirSync(themeDir).length > 0;
+    const current = [
+      kind === "folder" && readdirSync(themeDir).length > 0 ? `the files in ./${THEME_DIR}` : "",
+      pathKind(path.join(cwd, "THEME.md")) === "file" ? "THEME.md" : "",
+    ].filter(Boolean);
+    const replace = current.length > 0;
     if (
       replace &&
       !(await ask(
         p.confirm({
           ...io,
-          message: `./${THEME_DIR} already has files. Replace them with Horizon v${horizon.version}? Changes made there will be lost.`,
+          message: `Replace ${current.join(" and ")} with Horizon v${horizon.version}? Changes made there will be lost.`,
           initialValue: false,
         })
       ))
     ) {
       return undefined;
     }
-    return { horizon, replace };
+
+    let storefrontPassword: string | undefined;
+    if (info?.passwordProtected !== false) {
+      const entered = await ask(
+        p.password({
+          ...io,
+          message: info?.passwordProtected
+            ? "The storefront has a password. What is it? It goes in CLAUDE.md (press Enter to skip)"
+            : "Storefront password, if it has one, for CLAUDE.md (press Enter to skip)",
+        })
+      );
+      storefrontPassword = (entered ?? "").trim() || undefined;
+    }
+    return { horizon, docsVersion, replace, storefrontPassword };
   };
 
   try {
@@ -316,36 +381,14 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     let store = await askStore(existing.store ?? "");
     let auth = await askAuth(undefined);
 
-    if (!devMcpNode.ok) {
-      p.log.warn(`The Shopify Dev MCP won't start on ${nodeVersion} until you upgrade Node.js.`, io);
-    }
-    const includeDevMcp = await ask(
-      p.confirm({
-        ...io,
-        message: "Also add the Shopify Dev MCP server? (Shopify docs search and GraphQL validation)",
-        // An entry that's already there stays the default; the editor may run servers with another Node.js
-        initialValue: existing.hasDevMcp || (!existing.hasFile && devMcpNode.ok),
-      })
-    );
-
-    const theme = await askHorizon();
-
-    const advanced = (await ask(
-      p.confirm({
-        ...io,
-        message: "Configure advanced settings? (read-only, live theme writes, upload folder, toolsets, raw GraphQL)",
-        initialValue: false,
-      })
-    ))
-      ? await askAdvanced(existing.advanced)
-      : undefined;
-
+    let info: StoreInfo | undefined;
     for (;;) {
       const verifying = p.spinner(io);
       verifying.start(`Checking the credentials with ${store}`);
       const check = await verify(store, auth);
       if (check.ok) {
         verifying.stop(`Connected to ${check.shopName}`);
+        info = check;
         break;
       }
       verifying.error(`Couldn't connect: ${check.message}`);
@@ -355,15 +398,59 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
           message: "What next?",
           options: [
             { value: "retry", label: "Re-enter the store and credentials" },
-            { value: "save", label: "Save anyway" },
+            { value: "continue", label: "Continue anyway" },
             { value: "cancel", label: "Cancel" },
           ],
         })
       );
-      if (next === "save") break;
+      if (next === "continue") break;
       if (next === "cancel") throw new Cancelled();
       store = await askStore(store);
       auth = await askAuth(auth);
+    }
+
+    const project = await askProject(info);
+
+    let includeDevMcp: boolean;
+    let advanced: AdvancedAnswers | undefined;
+    if (project) {
+      // The settings CLAUDE.md describes
+      includeDevMcp = true;
+      advanced = {
+        readOnly: false,
+        allowLiveThemeWrites: true,
+        uploadDir: resolveFolder(cwd, UPLOADS_FOLDER),
+        toolsets: undefined,
+        disableRawGraphql: false,
+      };
+      p.log.info(
+        "CLAUDE.md has Claude edit the live theme, upload files from ./uploads and check code with the Shopify Dev MCP, so those are switched on.",
+        io
+      );
+      if (!devMcpNode.ok) {
+        p.log.warn(`The Shopify Dev MCP won't start on ${nodeVersion} until you upgrade Node.js.`, io);
+      }
+    } else {
+      if (!devMcpNode.ok) {
+        p.log.warn(`The Shopify Dev MCP won't start on ${nodeVersion} until you upgrade Node.js.`, io);
+      }
+      includeDevMcp = await ask(
+        p.confirm({
+          ...io,
+          message: "Also add the Shopify Dev MCP server? (Shopify docs search and GraphQL validation)",
+          // An entry that's already there stays the default; the editor may run servers with another Node.js
+          initialValue: existing.hasDevMcp || (!existing.hasFile && devMcpNode.ok),
+        })
+      );
+      advanced = (await ask(
+        p.confirm({
+          ...io,
+          message: "Configure advanced settings? (read-only, live theme writes, upload folder, toolsets, raw GraphQL)",
+          initialValue: false,
+        })
+      ))
+        ? await askAdvanced(existing.advanced)
+        : undefined;
     }
 
     const devMcpChange = includeDevMcp
@@ -376,8 +463,12 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         `Store: ${store}`,
         `Authentication: ${AUTH_LABELS[auth.mode]}`,
         `Shopify Dev MCP: ${devMcpChange}`,
-        `Horizon theme: ${theme ? `v${theme.horizon.version} into ./${THEME_DIR}${theme.replace ? ", replacing its files" : ""}` : "not downloaded"}`,
         `Advanced: ${advanced ? describeAdvanced(advanced) : existing.hasServer ? "unchanged" : "defaults"}`,
+        ...(project
+          ? [
+              `Horizon project: v${project.horizon.version} into ./${THEME_DIR}, docs for ${project.docsVersion}${project.replace ? ", replacing current files" : ""}`,
+            ]
+          : []),
       ].join("\n"),
       "Summary",
       io
@@ -414,21 +505,48 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       );
     }
 
-    let downloaded = true;
-    if (theme) {
+    let complete = true;
+    if (project) {
       const downloading = p.spinner(io);
-      downloading.start(`Downloading Horizon v${theme.horizon.version}`);
+      downloading.start(`Downloading Horizon v${project.horizon.version}`);
       try {
-        const result = await options.downloadHorizon(theme.horizon);
-        downloading.stop(`Downloaded Horizon v${theme.horizon.version} into ${result.dir} (${result.files} files)`);
+        const download = await options.downloadHorizon(project.horizon);
+        downloading.stop(`Downloaded Horizon v${project.horizon.version} into ${download.dir} (${download.files} files)`);
       } catch (err) {
-        downloaded = false;
+        complete = false;
         downloading.error(`Couldn't download Horizon: ${errorMessage(err)}`);
-        p.log.warn(`${CONFIG_FILE} is saved. Run setup again to retry the download.`, io);
       }
+
+      const live = info?.liveTheme;
+      const details: ProjectDetails = {
+        store,
+        devStore: info?.devStore,
+        liveTheme: live?.themeName === "Horizon" ? { id: live.id, version: live.version } : undefined,
+        passwordProtected: info?.passwordProtected,
+        storefrontPassword: project.storefrontPassword,
+      };
+      const writing = p.spinner(io);
+      writing.start("Writing CLAUDE.md, THEME.md and customizations.md");
+      try {
+        const docs = await options.writeProjectDocs({
+          docsVersion: project.docsVersion,
+          replaceThemeMd: project.replace,
+          details,
+        });
+        writing.stop(
+          `Project docs for Horizon ${project.docsVersion}: ${docs.files.map((doc) => `${doc.name} ${doc.action}`).join(", ")}`
+        );
+        if (docs.placeholdersLeft) {
+          p.log.warn("CLAUDE.md still has [agent: …] placeholders. Ask Claude to fill them in.", io);
+        }
+      } catch (err) {
+        complete = false;
+        writing.error(`Couldn't write the project docs: ${errorMessage(err)}`);
+      }
+      if (!complete) p.log.warn(`${CONFIG_FILE} is saved. Run setup again to finish the Horizon project.`, io);
     }
     p.outro("Restart Claude Code in this folder (or run /mcp) to connect.", io);
-    return downloaded ? "saved" : "failed";
+    return complete ? "saved" : "failed";
   } catch (err) {
     if (!(err instanceof Cancelled)) throw err;
     p.cancel(`Cancelled. ${CONFIG_FILE} wasn't changed.`, io);

@@ -18,7 +18,7 @@ export interface NodeCheck {
 export function checkAdminNode(version = process.versions.node): NodeCheck {
   // Resolves to the package root from both src/ (tests) and dist/ (published build)
   const { engines } = createRequire(import.meta.url)("../../package.json") as { engines: { node: string } };
-  return { label: "shopify-admin-mcp", range: engines.node, ok: semver.satisfies(version, engines.node) };
+  return { label: "Shopify Admin MCP", range: engines.node, ok: semver.satisfies(version, engines.node) };
 }
 
 interface Manifest {

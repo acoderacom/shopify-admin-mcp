@@ -8,3 +8,4 @@ dist/
 # Local MCP test setup (contains store credentials)
 .mcp.json
 uploads/
+template/

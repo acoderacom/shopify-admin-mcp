@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { describeExisting, type SaveResult, type SetupAnswers } from "../src/setup/mcp-config.js";
+import type { HorizonVersion } from "../src/setup/horizon.js";
 import type { NodeCheck } from "../src/setup/node-version.js";
 import type { VerifyResult } from "../src/setup/verify.js";
 import { runWizard, type WizardOptions } from "../src/setup/wizard.js";
@@ -12,8 +13,12 @@ const ENTER = "\r";
 const DOWN = "\u001B[B";
 const ANSI = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 
-const ADMIN_NODE: NodeCheck = { label: "shopify-admin-mcp", range: ">=22.12.0", ok: true };
+const ADMIN_NODE: NodeCheck = { label: "Shopify Admin MCP", range: ">=22.12.0", ok: true };
 const DEV_NODE: NodeCheck = { label: "Shopify Dev MCP", range: ">=22.12.0", ok: true };
+const HORIZON_VERSIONS: HorizonVersion[] = [
+  { version: "4.2.0", sha: "f9aef27", date: "2026-09-18T16:47:43Z" },
+  { version: "4.1.5", sha: "b233750", date: "2026-08-31T20:29:41Z" },
+];
 
 let cwd: string;
 
@@ -32,6 +37,8 @@ function setup(options: Partial<WizardOptions> = {}) {
   const save = vi.fn<WizardOptions["save"]>(
     async (): Promise<SaveResult> => ({ path: path.join(cwd, ".mcp.json"), gitignore: "added", tracked: false })
   );
+
+  const downloadHorizon = vi.fn<WizardOptions["downloadHorizon"]>(async () => ({ dir: path.join(cwd, "theme"), files: 484 }));
 
   const input = new PassThrough();
   let written = "";
@@ -54,6 +61,8 @@ function setup(options: Partial<WizardOptions> = {}) {
     checkDevMcpNode: async () => DEV_NODE,
     verify,
     save,
+    listHorizonVersions: async () => HORIZON_VERSIONS,
+    downloadHorizon,
     input,
     output,
     ...options,
@@ -86,14 +95,14 @@ function setup(options: Partial<WizardOptions> = {}) {
     }
   };
 
-  return { outcome, all, recent, waitFor, press, verify, save };
+  return { outcome, all, recent, waitFor, press, verify, save, downloadHorizon };
 }
 
 type Wizard = ReturnType<typeof setup>;
 const savedAnswers = (save: Wizard["save"]): SetupAnswers => save.mock.calls[0]![0];
 
-// Store, access token, no Shopify Dev MCP, no advanced settings: the shortest path to the summary
-async function quickPath({ waitFor, press }: Wizard, token = "shpat_x") {
+// Store, access token and no Shopify Dev MCP, up to the Horizon question
+async function toHorizon({ waitFor, press }: Wizard, token = "shpat_x") {
   await waitFor("Store domain");
   await press("mystore", ENTER);
   await waitFor("How does the app authenticate?");
@@ -102,8 +111,15 @@ async function quickPath({ waitFor, press }: Wizard, token = "shpat_x") {
   await press(token, ENTER);
   await waitFor("Also add the Shopify Dev MCP server?");
   await press("n");
-  await waitFor("Configure advanced settings?");
-  await press(ENTER);
+  await waitFor("Download Shopify's Horizon theme into ./theme?");
+}
+
+// Then no Horizon and no advanced settings: the shortest path to the summary
+async function quickPath(wizard: Wizard, token = "shpat_x") {
+  await toHorizon(wizard, token);
+  await wizard.press(ENTER);
+  await wizard.waitFor("Configure advanced settings?");
+  await wizard.press(ENTER);
 }
 
 describe("setup wizard", () => {
@@ -112,7 +128,7 @@ describe("setup wizard", () => {
     await waitFor("Store domain");
 
     expect(all()).toContain("Node.js v24.15.0");
-    expect(all()).toContain("shopify-admin-mcp needs Node.js >=22.12.0");
+    expect(all()).toContain("Shopify Admin MCP needs Node.js >=22.12.0");
     expect(all()).toContain("Shopify Dev MCP needs Node.js >=22.12.0");
   });
 
@@ -126,6 +142,8 @@ describe("setup wizard", () => {
     await waitFor("Admin API access token");
     await press("shpat_secret", ENTER);
     await waitFor("Also add the Shopify Dev MCP server?");
+    await press(ENTER);
+    await waitFor("Download Shopify's Horizon theme into ./theme?");
     await press(ENTER);
     await waitFor("Configure advanced settings?");
     await press(ENTER);
@@ -174,6 +192,8 @@ describe("setup wizard", () => {
     // No Shopify Dev MCP in the file, so not adding it is the default
     await waitFor("Also add the Shopify Dev MCP server?");
     await press(ENTER);
+    await waitFor("Download Shopify's Horizon theme into ./theme?");
+    await press(ENTER);
     await waitFor("Configure advanced settings?");
     await press(ENTER);
     await waitFor("Save .mcp.json?");
@@ -200,6 +220,8 @@ describe("setup wizard", () => {
     await press("client-secret", ENTER);
     await waitFor("Also add the Shopify Dev MCP server?");
     await press("n");
+    await waitFor("Download Shopify's Horizon theme into ./theme?");
+    await press(ENTER);
     await waitFor("Configure advanced settings?");
     await press("y");
     await waitFor("Read-only mode?");
@@ -244,6 +266,8 @@ describe("setup wizard", () => {
     await press("shpat_x", ENTER);
     await waitFor("Also add the Shopify Dev MCP server?");
     await press("n");
+    await waitFor("Download Shopify's Horizon theme into ./theme?");
+    await press(ENTER);
     await waitFor("Configure advanced settings?");
     await press("y");
     await waitFor("Read-only mode?");
@@ -338,6 +362,8 @@ describe("setup wizard", () => {
     await waitFor("won't start on v22.0.0 until you upgrade");
     await waitFor("Also add the Shopify Dev MCP server?");
     await press(ENTER);
+    await waitFor("Download Shopify's Horizon theme into ./theme?");
+    await press(ENTER);
     await waitFor("Configure advanced settings?");
     await press(ENTER);
     await waitFor("Save .mcp.json?");
@@ -345,5 +371,132 @@ describe("setup wizard", () => {
 
     await expect(outcome).resolves.toBe("saved");
     expect(savedAnswers(save).includeDevMcp).toBe(false);
+  });
+
+  it("downloads the chosen Horizon version into ./theme after saving", async () => {
+    const wizard = setup();
+    const { outcome, all, recent, waitFor, press, save, downloadHorizon } = wizard;
+
+    await toHorizon(wizard);
+    await press("y");
+    await waitFor("Which Horizon version?");
+    expect(recent()).toContain("Found 2 Horizon versions");
+    expect(recent()).toContain("v4.2.0 (latest, Sep 18, 2026)");
+    await press(DOWN, ENTER);
+    await waitFor("Configure advanced settings?");
+    await press(ENTER);
+    await waitFor("Save .mcp.json?");
+    expect(all()).toContain("Horizon theme: v4.1.5 into ./theme");
+    expect(downloadHorizon).not.toHaveBeenCalled();
+    await press(ENTER);
+
+    await expect(outcome).resolves.toBe("saved");
+    expect(downloadHorizon).toHaveBeenCalledWith(HORIZON_VERSIONS[1]);
+    expect(save.mock.invocationCallOrder[0]).toBeLessThan(downloadHorizon.mock.invocationCallOrder[0]!);
+    expect(recent()).toContain(`Downloaded Horizon v4.1.5 into ${path.join(cwd, "theme")} (484 files)`);
+  });
+
+  it("replaces a theme folder that has files only when that's confirmed", async () => {
+    await mkdir(path.join(cwd, "theme"));
+    await writeFile(path.join(cwd, "theme", "custom.liquid"), "mine");
+    const wizard = setup();
+    const { outcome, all, waitFor, press, downloadHorizon } = wizard;
+
+    await toHorizon(wizard);
+    await press("y");
+    await waitFor("Which Horizon version?");
+    await press(ENTER);
+    await waitFor("./theme already has files. Replace them with Horizon v4.2.0?");
+    await press("y");
+    await waitFor("Configure advanced settings?");
+    await press(ENTER);
+    await waitFor("Save .mcp.json?");
+    expect(all()).toContain("Horizon theme: v4.2.0 into ./theme, replacing its files");
+    await press(ENTER);
+
+    await expect(outcome).resolves.toBe("saved");
+    expect(downloadHorizon).toHaveBeenCalledWith(HORIZON_VERSIONS[0]);
+  });
+
+  it("leaves a theme folder that has files alone by default", async () => {
+    await mkdir(path.join(cwd, "theme"));
+    await writeFile(path.join(cwd, "theme", "custom.liquid"), "mine");
+    const wizard = setup();
+    const { outcome, all, waitFor, press, downloadHorizon } = wizard;
+
+    await toHorizon(wizard);
+    await press("y");
+    await waitFor("Which Horizon version?");
+    await press(ENTER);
+    await waitFor("already has files");
+    await press(ENTER);
+    await waitFor("Configure advanced settings?");
+    await press(ENTER);
+    await waitFor("Save .mcp.json?");
+    expect(all()).toContain("Horizon theme: not downloaded");
+    await press(ENTER);
+
+    await expect(outcome).resolves.toBe("saved");
+    expect(downloadHorizon).not.toHaveBeenCalled();
+  });
+
+  it("carries on without Horizon when GitHub can't list its versions", async () => {
+    const wizard = setup({
+      listHorizonVersions: async () => Promise.reject(new Error("GitHub's rate limit was reached, so try again in an hour")),
+    });
+    const { outcome, waitFor, press, downloadHorizon } = wizard;
+
+    await toHorizon(wizard);
+    await press("y");
+    await waitFor("Couldn't get Horizon versions: GitHub's rate limit was reached");
+    await waitFor("Configure advanced settings?");
+    await press(ENTER);
+    await waitFor("Save .mcp.json?");
+    await press(ENTER);
+
+    await expect(outcome).resolves.toBe("saved");
+    expect(downloadHorizon).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed Horizon download after saving .mcp.json", async () => {
+    const downloadHorizon = vi.fn<WizardOptions["downloadHorizon"]>(async () => Promise.reject(new Error("GitHub returned 500")));
+    const wizard = setup({ downloadHorizon });
+    const { outcome, recent, waitFor, press, save } = wizard;
+
+    await toHorizon(wizard);
+    await press("y");
+    await waitFor("Which Horizon version?");
+    await press(ENTER);
+    await waitFor("Configure advanced settings?");
+    await press(ENTER);
+    await waitFor("Save .mcp.json?");
+    await press(ENTER);
+
+    await expect(outcome).resolves.toBe("failed");
+    expect(save).toHaveBeenCalled();
+    expect(recent()).toContain("Couldn't download Horizon: GitHub returned 500");
+    expect(recent()).toContain(".mcp.json is saved. Run setup again to retry the download.");
+  });
+
+  it("doesn't offer Horizon when ./theme is a file", async () => {
+    await writeFile(path.join(cwd, "theme"), "");
+    const { outcome, recent, waitFor, press } = setup();
+    await waitFor("Store domain");
+
+    await press("mystore", ENTER);
+    await waitFor("How does the app authenticate?");
+    await press(ENTER);
+    await waitFor("Admin API access token");
+    await press("shpat_x", ENTER);
+    await waitFor("Also add the Shopify Dev MCP server?");
+    await press("n");
+    await waitFor("is a file, so setup can't download the Horizon theme there.");
+    await waitFor("Configure advanced settings?");
+    expect(recent()).not.toContain("Download Shopify's Horizon theme");
+    await press(ENTER);
+    await waitFor("Save .mcp.json?");
+    await press(ENTER);
+
+    await expect(outcome).resolves.toBe("saved");
   });
 });

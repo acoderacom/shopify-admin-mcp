@@ -1,3 +1,4 @@
+import { downloadHorizon, listHorizonVersions } from "./horizon.js";
 import { describeExisting, readMcpConfig, saveSetup, type ExistingSetup } from "./mcp-config.js";
 import { checkAdminNode, checkDevMcpNode } from "./node-version.js";
 import { verifyCredentials } from "./verify.js";
@@ -8,7 +9,7 @@ export async function runSetup(cwd: string): Promise<number> {
   const adminNode = checkAdminNode();
   if (!adminNode.ok) {
     console.error(
-      `shopify-admin-mcp needs Node.js ${adminNode.range}, but this is ${process.version}. Install a newer Node.js from https://nodejs.org and run setup again.`
+      `Shopify Admin MCP needs Node.js ${adminNode.range}, but this is ${process.version}. Install a newer Node.js from https://nodejs.org and run setup again.`
     );
     return 1;
   }
@@ -35,6 +36,8 @@ export async function runSetup(cwd: string): Promise<number> {
     checkDevMcpNode: () => checkDevMcpNode(),
     verify: verifyCredentials,
     save: (answers) => saveSetup(cwd, answers),
+    listHorizonVersions,
+    downloadHorizon: (horizon) => downloadHorizon(cwd, horizon),
   });
   return outcome === "saved" ? 0 : 1;
 }

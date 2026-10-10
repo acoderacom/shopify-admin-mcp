@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { docsVersionFor, fillClaudeMd, listDocsVersions, writeProjectDocs, type ProjectDetails } from "../src/setup/template.js";
+import { checkLiveTheme, fillClaudeMd, listDocsVersions, writeProjectDocs, type ProjectDetails } from "../src/setup/template.js";
 import { entry, gzipped, tar } from "./tar-helpers.js";
 
 // The store lines of the template's CLAUDE.md
@@ -40,11 +40,31 @@ describe("listDocsVersions", () => {
   });
 });
 
-describe("docsVersionFor", () => {
-  it("uses the version's own docs, or the newest", () => {
-    expect(docsVersionFor("4.1.5", ["4.2.0", "4.1.5"])).toBe("4.1.5");
-    expect(docsVersionFor("3.5.1", ["4.2.0", "4.1.5"])).toBe("4.2.0");
-    expect(docsVersionFor("4.2.0", [])).toBeUndefined();
+describe("checkLiveTheme", () => {
+  const horizon = (version?: string) => ({ name: "Horizon", themeName: "Horizon", version });
+
+  it("matches a live Horizon version the template covers", () => {
+    expect(checkLiveTheme(horizon("4.2.0"), "", ["4.2.0"])).toEqual({ status: "match", version: "4.2.0" });
+    expect(checkLiveTheme(horizon("4.1.5"), "", ["4.2.0", "4.1.5"])).toEqual({ status: "match", version: "4.1.5" });
+  });
+
+  it("points an older or newer live theme at the newest template version", () => {
+    expect(checkLiveTheme(horizon("4.1.3"), "", ["4.2.0", "4.0.0"])).toEqual({ status: "older", version: "4.1.3", templateVersion: "4.2.0" });
+    expect(checkLiveTheme(horizon("4.10.0"), "", ["4.2.0"])).toEqual({ status: "newer", version: "4.10.0", templateVersion: "4.2.0" });
+  });
+
+  it("can't match a theme that isn't Horizon or that it can't read", () => {
+    expect(checkLiveTheme({ name: "Dawn", themeName: "Dawn", version: "15.0.0" }, "", ["4.2.0"])).toEqual({
+      status: "not-horizon",
+      name: "Dawn",
+      templateVersion: "4.2.0",
+    });
+    expect(checkLiveTheme(undefined, "Access denied for themes field", ["4.2.0"])).toEqual({
+      status: "unknown",
+      reason: "Access denied for themes field",
+      templateVersion: "4.2.0",
+    });
+    expect(checkLiveTheme(horizon(), "", ["4.2.0"])).toMatchObject({ status: "unknown", reason: "its Horizon version couldn't be read" });
   });
 });
 

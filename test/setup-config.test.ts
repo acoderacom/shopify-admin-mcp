@@ -18,6 +18,7 @@ const answers: SetupAnswers = {
   store: "mystore.myshopify.com",
   auth: { mode: "access-token", accessToken: "shpat_new" },
   includeDevMcp: true,
+  disableThemeWrites: false,
 };
 
 let dir: string;
@@ -213,6 +214,22 @@ describe("applyAnswers", () => {
       SHOPIFY_TOOLSETS: "products,themes",
       SHOPIFY_DISABLE_RAW_GRAPHQL: "true",
     });
+  });
+
+  it("turns theme edits off, dropping live theme writes and theme flags in args", () => {
+    const config = {
+      mcpServers: {
+        "shopify-admin-mcp": {
+          command: "npx",
+          args: ["-y", "@acodera/shopify-admin-mcp@latest", "--allow-live-theme-writes", "--disable-theme-writes"],
+          env: { SHOPIFY_STORE: "mystore.myshopify.com", SHOPIFY_ACCESS_TOKEN: "shpat_old", SHOPIFY_ALLOW_LIVE_THEME_WRITES: "true" },
+        },
+      },
+    };
+    const entry = applyAnswers(config, { ...answers, disableThemeWrites: true }).mcpServers!["shopify-admin-mcp"]!;
+
+    expect(entry.args).toEqual(["-y", "@acodera/shopify-admin-mcp@latest"]);
+    expect(entry.env).toMatchObject({ SHOPIFY_ALLOW_LIVE_THEME_WRITES: "false", SHOPIFY_DISABLE_THEME_WRITES: "true" });
   });
 
   it("keeps the advanced settings in the file when they weren't asked", () => {

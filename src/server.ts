@@ -23,7 +23,7 @@ import { registerMarketTools } from "./tools/markets.js";
 const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
 
 export type ServerOptions = Pick<Config, "readOnly"> &
-  Partial<Pick<Config, "toolsets" | "uploadDir" | "allowLiveThemeWrites" | "disableRawGraphql">>;
+  Partial<Pick<Config, "toolsets" | "uploadDir" | "allowLiveThemeWrites" | "disableThemeWrites" | "disableRawGraphql">>;
 
 type RegisterToolset = (
   server: ToolRegistrar,
@@ -57,6 +57,9 @@ function instructions(options: ServerOptions): string {
       ? "The server is read-only, so only tools that read data are available."
       : "Mutations report validation problems as userErrors, and a call that returns userErrors is marked as an error."
   );
+  if (options.disableThemeWrites && !options.readOnly) {
+    lines.push("Theme edits are disabled: themes and their files can be read but not changed, published, created or deleted.");
+  }
   if (!options.disableRawGraphql) {
     lines.push(
       "For anything the other tools don't cover, use shopify_graphql after checking field and argument names with shopify_schema_search and shopify_schema_details."

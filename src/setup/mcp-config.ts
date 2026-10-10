@@ -32,6 +32,8 @@ export interface SetupAnswers {
   includeDevMcp: boolean;
   /** Undefined keeps the advanced settings already in the file. */
   advanced?: AdvancedAnswers;
+  /** Refuses every theme change; it also turns off live theme writes. */
+  disableThemeWrites: boolean;
 }
 
 interface ServerEntry {
@@ -86,7 +88,7 @@ const VALUE_FLAGS = [
   "--upload-dir",
   "--toolsets",
 ];
-const BOOLEAN_FLAGS = ["--read-only", "--allow-live-theme-writes", "--disable-raw-graphql"];
+const BOOLEAN_FLAGS = ["--read-only", "--allow-live-theme-writes", "--disable-theme-writes", "--disable-raw-graphql"];
 
 const ENV = {
   store: "SHOPIFY_STORE",
@@ -98,6 +100,7 @@ const ENV = {
   uploadDir: "SHOPIFY_UPLOAD_DIR",
   toolsets: "SHOPIFY_TOOLSETS",
   disableRawGraphql: "SHOPIFY_DISABLE_RAW_GRAPHQL",
+  disableThemeWrites: "SHOPIFY_DISABLE_THEME_WRITES",
 } as const;
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -228,7 +231,8 @@ function buildEnv(
     set(ENV.clientSecret, answers.auth.clientSecret);
   }
   setFlag(ENV.readOnly, advanced.readOnly);
-  setFlag(ENV.allowLiveThemeWrites, advanced.allowLiveThemeWrites);
+  setFlag(ENV.allowLiveThemeWrites, advanced.allowLiveThemeWrites && !answers.disableThemeWrites);
+  setFlag(ENV.disableThemeWrites, answers.disableThemeWrites);
   set(ENV.uploadDir, advanced.uploadDir);
   set(ENV.toolsets, advanced.toolsets?.join(","));
   setFlag(ENV.disableRawGraphql, advanced.disableRawGraphql);

@@ -65,6 +65,17 @@ export async function rawLiveThemeGuard(
   return null;
 }
 
+/**
+ * With theme edits disabled, refuses any theme mutation: themeCreate, themeUpdate, themeDelete,
+ * themeDuplicate, themePublish and the theme file writes. Returns the reason, or null.
+ */
+export function rawThemeWriteGuard(document: DocumentNode): string | null {
+  const field = mutationRootFields(document).find((candidate) => candidate.name.value.startsWith("theme"));
+  return field
+    ? `${field.name.value} changes a theme, and theme edits are disabled on this server (--disable-theme-writes).`
+    : null;
+}
+
 // Root fields of every mutation in the document, including those selected through fragments
 function mutationRootFields(document: DocumentNode): FieldNode[] {
   const fragments = new Map<string, FragmentDefinitionNode>();

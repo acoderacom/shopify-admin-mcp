@@ -44,9 +44,29 @@ export async function listDocsVersions(): Promise<string[]> {
     .sort(semver.rcompare);
 }
 
-/** The docs for a Horizon version: its own when they exist, otherwise the newest. */
-export function docsVersionFor(version: string, docsVersions: string[]): string | undefined {
-  return docsVersions.includes(version) ? version : docsVersions[0];
+/** How the store's live theme compares with the Horizon versions the template has docs for. */
+export type LiveThemeCheck =
+  | { status: "match"; version: string }
+  | { status: "older" | "newer"; version: string; templateVersion: string }
+  | { status: "not-horizon"; name: string; templateVersion: string }
+  | { status: "unknown"; reason: string; templateVersion: string };
+
+/**
+ * A project needs the live theme to be a Horizon version the template covers, since CLAUDE.md and
+ * THEME.md describe that version. When it isn't, the newest template version is the one to move to.
+ */
+export function checkLiveTheme(
+  live: { name: string; themeName?: string; version?: string } | undefined,
+  reason: string,
+  docsVersions: string[]
+): LiveThemeCheck {
+  const templateVersion = docsVersions[0]!;
+  if (!live) return { status: "unknown", reason, templateVersion };
+  if (live.themeName !== "Horizon") return { status: "not-horizon", name: live.name, templateVersion };
+  const version = live.version;
+  if (!version || !semver.valid(version)) return { status: "unknown", reason: "its Horizon version couldn't be read", templateVersion };
+  if (docsVersions.includes(version)) return { status: "match", version };
+  return { status: semver.lt(version, templateVersion) ? "older" : "newer", version, templateVersion };
 }
 
 const PLACEHOLDER = {

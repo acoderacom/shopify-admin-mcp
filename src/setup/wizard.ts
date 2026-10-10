@@ -143,7 +143,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         message: "How does the app authenticate?",
         initialValue: current?.mode ?? existing.authMode ?? "access-token",
         options: [
-          { value: "access-token", label: AUTH_LABELS["access-token"], hint: "legacy custom app, shpat_…" },
+          { value: "access-token", label: AUTH_LABELS["access-token"], hint: "legacy custom app" },
           { value: "client-credentials", label: AUTH_LABELS["client-credentials"], hint: "Dev Dashboard app" },
         ],
       })

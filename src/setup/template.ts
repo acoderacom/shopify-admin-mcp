@@ -1,16 +1,32 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import semver from "semver";
-import { fetchArchive, githubApi } from "./github.js";
+import { githubRaw } from "./github.js";
+import type { HorizonVersion } from "./horizon.js";
 
-/** The repository with the project docs that go next to a Horizon theme, tagged per Horizon version. */
+/**
+ * The repository with the project docs that go next to a Horizon theme: shared CLAUDE.md and
+ * customizations.md, one versions/<version>/THEME.md per Horizon version, and versions.json saying
+ * which versions stores may run.
+ */
 export const TEMPLATE_REPO = "acoderacom/claude-horizon";
+const TEMPLATE_REF = "main";
 export const TEMPLATE_FILES = ["CLAUDE.md", "THEME.md", "customizations.md"] as const;
 export type TemplateFile = (typeof TEMPLATE_FILES)[number];
 
-/** What setup knows about the store, for CLAUDE.md. */
+/** The template's versions.json: the Horizon versions stores may run. */
+export interface TemplateIndex {
+  /** The version new and mismatched stores move to. */
+  current: HorizonVersion;
+  /** Versions stores may run, newest first, each with the Shopify/horizon commit its THEME.md describes. */
+  supported: HorizonVersion[];
+}
+
+/** What setup knows about the store and project, for the placeholders in CLAUDE.md and customizations.md. */
 export interface ProjectDetails {
   store: string;
+  /** The project's Horizon version, which THEME.md covers. */
+  horizonVersion: string;
   devStore?: boolean;
   /** The live theme, when it's Horizon. */
   liveTheme?: { id: string; version?: string };
@@ -20,8 +36,6 @@ export interface ProjectDetails {
 }
 
 export interface ProjectDocsInput {
-  /** The Horizon version whose docs to use. */
-  docsVersion: string;
   /** Replace an existing THEME.md, since it describes the theme being replaced. */
   replaceThemeMd: boolean;
   details: ProjectDetails;
@@ -35,38 +49,74 @@ export interface ProjectDocsResult {
   placeholdersLeft: boolean;
 }
 
-/** Lists the Horizon versions the template has docs for, newest first, from its horizon-X.Y.Z tags. */
-export async function listDocsVersions(): Promise<string[]> {
-  const tags = await githubApi<Array<{ name: string }>>(`repos/${TEMPLATE_REPO}/tags?per_page=100`);
-  return tags
-    .map((tag) => /^horizon-(\d+\.\d+\.\d+)$/.exec(tag.name)?.[1])
-    .filter((version): version is string => version !== undefined)
-    .sort(semver.rcompare);
+const STATUSES = ["supported", "draft", "retired"];
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Reads versions.json, refusing one setup can't rely on. */
+export function parseTemplateIndex(text: string): TemplateIndex {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error("versions.json isn't valid JSON");
+  }
+  if (!isObject(data) || !isObject(data.versions)) throw new Error("versions.json has no versions");
+
+  const supported: HorizonVersion[] = [];
+  for (const [version, entry] of Object.entries(data.versions)) {
+    if (!semver.valid(version)) throw new Error(`versions.json lists "${version}", which isn't a version number`);
+    const status = isObject(entry) ? entry.status : undefined;
+    if (typeof status !== "string" || !STATUSES.includes(status)) {
+      throw new Error(`versions.json gives ${version} no status (${STATUSES.join(", ")})`);
+    }
+    if (status !== "supported") continue;
+    const sha = isObject(entry) ? entry.horizonCommit : undefined;
+    if (typeof sha !== "string" || !/^[0-9a-f]{40}$/.test(sha)) {
+      throw new Error(`versions.json gives the supported version ${version} no full horizonCommit`);
+    }
+    supported.push({ version, sha });
+  }
+  supported.sort((a, b) => semver.rcompare(a.version, b.version));
+
+  const current = supported.find((horizon) => horizon.version === data.current);
+  if (!current) {
+    const named = typeof data.current === "string" ? ` ${data.current}` : "";
+    throw new Error(`versions.json's current version${named} isn't a supported version`);
+  }
+  return { current, supported };
 }
 
-/** How the store's live theme compares with the Horizon versions the template has docs for. */
+/** Downloads the template's versions.json. */
+export async function loadTemplateIndex(): Promise<TemplateIndex> {
+  return parseTemplateIndex(await githubRaw(TEMPLATE_REPO, TEMPLATE_REF, "versions.json"));
+}
+
+/** How the store's live theme compares with the versions the template supports. */
 export type LiveThemeCheck =
-  | { status: "match"; version: string }
-  | { status: "older" | "newer"; version: string; templateVersion: string }
-  | { status: "not-horizon"; name: string; templateVersion: string }
-  | { status: "unknown"; reason: string; templateVersion: string };
+  | { status: "match"; horizon: HorizonVersion }
+  | { status: "older" | "newer"; version: string; current: HorizonVersion }
+  | { status: "not-horizon"; name: string; current: HorizonVersion }
+  | { status: "unknown"; reason: string; current: HorizonVersion };
 
 /**
- * A project needs the live theme to be a Horizon version the template covers, since CLAUDE.md and
- * THEME.md describe that version. When it isn't, the newest template version is the one to move to.
+ * A project needs the live theme to be a supported Horizon version, since CLAUDE.md and THEME.md
+ * describe that version. Any other theme is moved to the current version.
  */
 export function checkLiveTheme(
   live: { name: string; themeName?: string; version?: string } | undefined,
   reason: string,
-  docsVersions: string[]
+  index: TemplateIndex
 ): LiveThemeCheck {
-  const templateVersion = docsVersions[0]!;
-  if (!live) return { status: "unknown", reason, templateVersion };
-  if (live.themeName !== "Horizon") return { status: "not-horizon", name: live.name, templateVersion };
+  const { current } = index;
+  if (!live) return { status: "unknown", reason, current };
+  if (live.themeName !== "Horizon") return { status: "not-horizon", name: live.name, current };
   const version = live.version;
-  if (!version || !semver.valid(version)) return { status: "unknown", reason: "its Horizon version couldn't be read", templateVersion };
-  if (docsVersions.includes(version)) return { status: "match", version };
-  return { status: semver.lt(version, templateVersion) ? "older" : "newer", version, templateVersion };
+  if (!version || !semver.valid(version)) return { status: "unknown", reason: "its Horizon version couldn't be read", current };
+  const horizon = index.supported.find((candidate) => candidate.version === version);
+  if (horizon) return { status: "match", horizon };
+  return { status: semver.lt(version, current.version) ? "older" : "newer", version, current };
 }
 
 const PLACEHOLDER = {
@@ -75,14 +125,15 @@ const PLACEHOLDER = {
   themeVersion: "[agent: insert the live theme's Horizon version]",
   themeId: "[agent: insert the live theme's ID, gid://shopify/OnlineStoreTheme/…]",
   password: "[agent: insert the password in backticks, or delete this line if the storefront has none]",
+  horizonVersion: "[agent: insert the Horizon version THEME.md covers]",
 };
 
 /**
  * Fills in the placeholders setup knows the answer to and leaves the rest for Claude. In a CLAUDE.md
- * filled in earlier, it updates the store, live theme and password on their lines instead.
+ * filled in earlier, it updates the store, live theme, password and Horizon version on their lines.
  */
-export function fillClaudeMd(text: string, details: ProjectDetails): string {
-  const { store, devStore, liveTheme, storefrontPassword } = details;
+export function fillTemplate(text: string, details: ProjectDetails): string {
+  const { store, horizonVersion, devStore, liveTheme, storefrontPassword } = details;
   const storeKind = devStore === undefined ? undefined : devStore ? "development store" : "live store";
   const password = storefrontPassword ? `\`${storefrontPassword}\`` : undefined;
   // Values go in through functions, so a "$" in a password isn't read as a replacement pattern
@@ -98,6 +149,7 @@ export function fillClaudeMd(text: string, details: ProjectDetails): string {
       line = put(line, PLACEHOLDER.themeId, liveTheme?.id);
       line = put(line, PLACEHOLDER.themeVersion, liveTheme?.version);
       line = put(line, PLACEHOLDER.password, password);
+      line = line.replaceAll(PLACEHOLDER.horizonVersion, () => horizonVersion);
       if (line.startsWith("- Store: ")) {
         line = put(line, /[a-z0-9][a-z0-9-]*\.myshopify\.com/, store);
         line = put(line, /(development|live) store/, storeKind);
@@ -107,6 +159,13 @@ export function fillClaudeMd(text: string, details: ProjectDetails): string {
         line = put(line, /Horizon \d+\.\d+\.\d+/, liveTheme?.version ? `Horizon ${liveTheme.version}` : undefined);
       }
       if (line.startsWith("- Storefront password")) line = put(line, /`[^`]*`/, password);
+      // The lines that name the Horizon version THEME.md covers
+      if (line.includes("technical spec of stock Horizon ")) {
+        line = put(line, /stock Horizon \d+\.\d+\.\d+/, `stock Horizon ${horizonVersion}`);
+      }
+      if (line.includes("`theme_version` ")) {
+        line = put(line, /`theme_version` \d+\.\d+\.\d+/, `\`theme_version\` ${horizonVersion}`);
+      }
       return [line];
     })
     .join("\n");
@@ -121,17 +180,26 @@ async function readIfExists(file: string): Promise<string | undefined> {
   }
 }
 
+// Where each project file comes from in the template
+const SOURCE: Record<TemplateFile, (version: string) => string> = {
+  "CLAUDE.md": () => "CLAUDE.md",
+  "THEME.md": (version) => `versions/${version}/THEME.md`,
+  "customizations.md": () => "customizations.md",
+};
+
 /**
- * Writes the template's docs into dir. CLAUDE.md gets the store filled in, and one that's already
- * there keeps everything except those details. THEME.md is replaced only when asked.
- * customizations.md is the project's change log, so one that's already there is always kept.
+ * Writes the template's docs for the project's Horizon version into dir. CLAUDE.md gets the store
+ * filled in, and one that's already there keeps everything except those details. THEME.md is
+ * replaced only when asked. customizations.md is the project's change log, so one that's already
+ * there is always kept.
  */
 export async function writeProjectDocs(dir: string, input: ProjectDocsInput): Promise<ProjectDocsResult> {
   // Everything is downloaded before anything is written
-  const archive = await fetchArchive(TEMPLATE_REPO, `horizon-${input.docsVersion}`);
-  const template = new Map(archive.map((file) => [file.path, file.data.toString("utf8")]));
-  const missing = TEMPLATE_FILES.filter((name) => !template.has(name));
-  if (missing.length > 0) throw new Error(`The template is missing ${missing.join(", ")}`);
+  const version = input.details.horizonVersion;
+  const sources = await Promise.all(
+    TEMPLATE_FILES.map((name) => githubRaw(TEMPLATE_REPO, TEMPLATE_REF, SOURCE[name](version)))
+  );
+  const template = new Map(TEMPLATE_FILES.map((name, i) => [name, sources[i]!]));
 
   const files: ProjectDocsResult["files"] = [];
   let placeholdersLeft = false;
@@ -140,10 +208,13 @@ export async function writeProjectDocs(dir: string, input: ProjectDocsInput): Pr
     const current = await readIfExists(file);
     let next: string | undefined;
     if (name === "CLAUDE.md") {
-      next = fillClaudeMd(current ?? template.get(name)!, input.details);
+      next = fillTemplate(current ?? template.get(name)!, input.details);
       placeholdersLeft = next.includes("[agent:");
-    } else if (current === undefined || (name === "THEME.md" && input.replaceThemeMd)) {
-      next = template.get(name)!;
+    } else if (name === "THEME.md") {
+      // The version's spec is copied as it is
+      if (current === undefined || input.replaceThemeMd) next = template.get(name)!;
+    } else if (current === undefined) {
+      next = fillTemplate(template.get(name)!, input.details);
     }
 
     let action: DocAction;

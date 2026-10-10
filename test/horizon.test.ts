@@ -3,47 +3,14 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { downloadHorizon, listHorizonVersions, type HorizonVersion } from "../src/setup/horizon.js";
+import { downloadHorizon, saveHorizonZip, type HorizonVersion } from "../src/setup/horizon.js";
 import { entry, gzipped, tar } from "./tar-helpers.js";
+import { readZip } from "./zip-helpers.js";
 
-const HORIZON: HorizonVersion = { version: "4.2.0", sha: "abc123", date: "2026-09-18T16:47:43Z" };
+const HORIZON: HorizonVersion = { version: "4.2.0", sha: "abc123" };
 
 afterEach(() => {
   vi.unstubAllGlobals();
-});
-
-describe("listHorizonVersions", () => {
-  it("reads versions from the release commits, newest first", async () => {
-    const commit = (sha: string, message: string, date: string) => ({ sha, commit: { message, committer: { date } } });
-    const fetchMock = vi.fn<typeof fetch>(async () =>
-      Response.json([
-        commit("c5", "Horizon v4.2.0", "2026-09-18T16:47:43Z"),
-        commit("c4", "Update the theme settings", "2026-09-10T10:00:00Z"),
-        commit("c3", "Horizon v4.10.0\n\nRe-released", "2026-09-01T10:00:00Z"),
-        commit("c2", "Horizon v4.2.0", "2026-08-01T10:00:00Z"),
-        commit("c1", "Horizon v4.1.5", "2026-07-01T10:00:00Z"),
-      ])
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(listHorizonVersions()).resolves.toEqual([
-      { version: "4.10.0", sha: "c3", date: "2026-09-01T10:00:00Z" },
-      { version: "4.2.0", sha: "c5", date: "2026-09-18T16:47:43Z" },
-      { version: "4.1.5", sha: "c1", date: "2026-07-01T10:00:00Z" },
-    ]);
-    const [url, init] = fetchMock.mock.calls[0]!;
-    expect(String(url)).toBe("https://api.github.com/repos/Shopify/horizon/commits?path=config/settings_schema.json&per_page=100");
-    expect(init?.headers).toMatchObject({ "user-agent": "@acodera/shopify-admin-mcp" });
-  });
-
-  it("explains GitHub's rate limit", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn<typeof fetch>(async () => new Response("{}", { status: 403, headers: { "x-ratelimit-remaining": "0" } }))
-    );
-
-    await expect(listHorizonVersions()).rejects.toThrow("GitHub's rate limit was reached");
-  });
 });
 
 describe("downloadHorizon", () => {
@@ -95,6 +62,41 @@ describe("downloadHorizon", () => {
     vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => new Response("", { status: 404 })));
 
     await expect(downloadHorizon(dir, HORIZON)).rejects.toThrow("GitHub returned 404");
+    expect(await readdir(dir)).toEqual([]);
+  });
+});
+
+describe("saveHorizonZip", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), "shopify-mcp-zip-"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("saves the version as horizon-<version>.zip with the theme folders at the top level", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      gzipped(tar(entry("horizon-abc123/layout/theme.liquid", "<html></html>"), entry("horizon-abc123/config/settings_schema.json", "[]")))
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const saved = await saveHorizonZip(dir, HORIZON);
+
+    expect(saved).toBe(path.join(dir, "horizon-4.2.0.zip"));
+    expect(String(fetchMock.mock.calls[0]![0])).toBe("https://github.com/Shopify/horizon/archive/abc123.tar.gz");
+    const files = readZip(await readFile(saved));
+    expect([...files.keys()]).toEqual(["layout/theme.liquid", "config/settings_schema.json"]);
+    expect(files.get("layout/theme.liquid")!.toString()).toBe("<html></html>");
+    expect(await readdir(dir)).toEqual(["horizon-4.2.0.zip"]);
+  });
+
+  it("refuses a download that isn't a theme", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => gzipped(tar(entry("horizon-abc123/README.md", "hi")))));
+
+    await expect(saveHorizonZip(dir, HORIZON)).rejects.toThrow("no layout/theme.liquid");
     expect(await readdir(dir)).toEqual([]);
   });
 });

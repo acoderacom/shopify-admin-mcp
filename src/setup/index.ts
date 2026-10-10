@@ -1,7 +1,7 @@
-import { downloadHorizon, listHorizonVersions } from "./horizon.js";
+import { downloadHorizon, saveHorizonZip } from "./horizon.js";
 import { describeExisting, readMcpConfig, saveSetup, type ExistingSetup } from "./mcp-config.js";
 import { checkAdminNode, checkDevMcpNode } from "./node-version.js";
-import { listDocsVersions, writeProjectDocs } from "./template.js";
+import { loadTemplateIndex, writeProjectDocs } from "./template.js";
 import { verifyCredentials } from "./verify.js";
 
 /** Runs the interactive .mcp.json wizard in `cwd` and returns the process exit code. */
@@ -37,9 +37,9 @@ export async function runSetup(cwd: string): Promise<number> {
     checkDevMcpNode: () => checkDevMcpNode(),
     verify: verifyCredentials,
     save: (answers) => saveSetup(cwd, answers),
-    listHorizonVersions,
+    loadTemplateIndex,
     downloadHorizon: (horizon) => downloadHorizon(cwd, horizon),
-    listDocsVersions,
+    saveHorizonZip: (horizon) => saveHorizonZip(cwd, horizon),
     writeProjectDocs: (input) => writeProjectDocs(cwd, input),
   });
   return outcome === "saved" ? 0 : 1;

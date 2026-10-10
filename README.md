@@ -14,6 +14,7 @@ MCP server providing full access to Shopify's Admin GraphQL API. Targets API ver
 - **Toolsets** — register only the areas you need to keep the assistant's tool list short
 - **Read-only mode** — one flag hides every write tool and blocks mutations in raw GraphQL
 - **Tool annotations** — every tool is marked read-only, write, or destructive so MCP clients can ask before risky calls
+- **Setup wizard** — `npx @acodera/shopify-admin-mcp setup` writes `.mcp.json` for you, interactively
 - **Dual auth** — OAuth client credentials (Dev Dashboard apps) and legacy access tokens (`shpat_`)
 - **Auto token refresh** — client-credentials tokens are refreshed automatically before they expire
 - **Rate-limit aware** — throttled requests are retried after the cost bucket refills
@@ -36,6 +37,24 @@ npx -y @acodera/shopify-admin-mcp
 ```
 
 Add `--read-only` (or `SHOPIFY_READ_ONLY=true`) when the assistant only needs to look at store data.
+
+## Setup Wizard
+
+To configure Claude Code without editing JSON, run the wizard in your project folder:
+
+```bash
+npx -y @acodera/shopify-admin-mcp@latest setup
+```
+
+It creates or updates `.mcp.json` in the current folder:
+
+1. Checks that this machine's Node.js meets the requirements of this server and of the [Shopify Dev MCP](https://shopify.dev/docs/apps/build/devmcp) server
+2. Asks for the store, then an access token (`shpat_…`) or a client ID and secret
+3. Asks whether to add the Shopify Dev MCP server too
+4. Optionally asks for advanced settings: read-only mode, live theme writes, an upload folder (it can create `./uploads` and fill in the path for you), toolsets, and turning off raw GraphQL
+5. Checks the credentials with a `shop` query, shows a summary, and saves when you confirm
+
+Running it on an existing `.mcp.json` fills in the current values, so pressing Enter keeps them, and other servers in the file are left alone. The token or client secret is saved in plain text, so the file is written readable only by you and `.mcp.json` is added to `.gitignore` when the folder is a git repo. Restart Claude Code in the folder (or run `/mcp`) to connect.
 
 ## Tools
 
@@ -560,7 +579,7 @@ npm test       # unit tests; live tests are skipped without credentials
 npm run lint   # type-check src and tests
 ```
 
-The unit tests need no network. They cover CLI validation, the HTTP client (throttle and `Retry-After` handling, token refresh), every tool's request over a real MCP connection, read-only mode, toolsets, the live-theme guard (including raw GraphQL), and upload-directory confinement.
+The unit tests need no network. They cover CLI validation, the HTTP client (throttle and `Retry-After` handling, token refresh), every tool's request over a real MCP connection, read-only mode, toolsets, the live-theme guard (including raw GraphQL), upload-directory confinement, and the setup wizard (driven by keystrokes through the real prompts).
 
 Live integration tests run against a real store when credentials are set:
 

@@ -45,7 +45,7 @@ const UNEXPANDED_VARIABLE = /^\$(\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)$/;
 // MCP clients that don't expand variables pass ${VAR} through literally, and unset
 // variables often arrive as empty strings. Treating both as "not provided" lets one
 // config carry both auth methods and use whichever is filled in.
-function provided(value: string | undefined): string | undefined {
+export function provided(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed || UNEXPANDED_VARIABLE.test(trimmed)) return undefined;
   return trimmed;
@@ -70,13 +70,18 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-function normalizeStore(store: string): string {
+export function normalizeStore(store: string): string {
   const host = store
     .trim()
     .toLowerCase()
     .replace(/^https?:\/\//, "")
     .replace(/\/+$/, "");
   return host.endsWith(".myshopify.com") ? host : `${host}.myshopify.com`;
+}
+
+/** Whether a normalized store host is one credentials may be sent to. */
+export function isValidStore(host: string): boolean {
+  return STORE_PATTERN.test(host);
 }
 
 function parseToolsets(value: string | undefined): Toolset[] | undefined {
@@ -109,7 +114,7 @@ export function parseArgs(argv: string[]): Config {
   if (!store) fail("--store is required (e.g. --store mystore.myshopify.com)");
 
   const normalizedStore = normalizeStore(store);
-  if (!STORE_PATTERN.test(normalizedStore)) {
+  if (!isValidStore(normalizedStore)) {
     fail(
       `Invalid store "${store}". Expected a *.myshopify.com domain (e.g. mystore.myshopify.com)`
     );

@@ -23,7 +23,7 @@ Run the setup wizard in your project folder:
 npx -y @acodera/shopify-admin-mcp@latest setup
 ```
 
-It checks your Node.js version, asks for your store and credentials, optionally adds the [Shopify Dev MCP](https://shopify.dev/docs/apps/build/devmcp) server and advanced settings, verifies the credentials, and creates or updates `.mcp.json`. It can also download any version of Shopify's [Horizon](https://github.com/Shopify/horizon) theme into `./theme`. Current values are prefilled and other servers are kept. The secret is saved in plain text, so the file is written readable only by you and added to `.gitignore` in a git repo. Restart Claude Code (or run `/mcp`) to connect.
+It checks your Node.js version, asks for your store and credentials and checks them, optionally adds the [Shopify Dev MCP](https://shopify.dev/docs/apps/build/devmcp) server and advanced settings, and creates or updates `.mcp.json`. It can also set up a Horizon theme project: any version of Shopify's [Horizon](https://github.com/Shopify/horizon) theme in `./theme` (the store's live version is preselected), plus `CLAUDE.md`, `THEME.md` and `customizations.md` from [acoderacom/claude-horizon](https://github.com/acoderacom/claude-horizon), with the store and live theme filled in to `CLAUDE.md`. Current values are prefilled and other servers are kept. The secret is saved in plain text, so the file is written readable only by you and added to `.gitignore` in a git repo. Restart Claude Code (or run `/mcp`) to connect.
 
 ### Manual setup
 

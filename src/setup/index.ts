@@ -1,6 +1,7 @@
 import { downloadHorizon, listHorizonVersions } from "./horizon.js";
 import { describeExisting, readMcpConfig, saveSetup, type ExistingSetup } from "./mcp-config.js";
 import { checkAdminNode, checkDevMcpNode } from "./node-version.js";
+import { listDocsVersions, writeProjectDocs } from "./template.js";
 import { verifyCredentials } from "./verify.js";
 
 /** Runs the interactive .mcp.json wizard in `cwd` and returns the process exit code. */
@@ -38,6 +39,8 @@ export async function runSetup(cwd: string): Promise<number> {
     save: (answers) => saveSetup(cwd, answers),
     listHorizonVersions,
     downloadHorizon: (horizon) => downloadHorizon(cwd, horizon),
+    listDocsVersions,
+    writeProjectDocs: (input) => writeProjectDocs(cwd, input),
   });
   return outcome === "saved" ? 0 : 1;
 }

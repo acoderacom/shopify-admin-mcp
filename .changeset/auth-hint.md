@@ -2,4 +2,4 @@
 "@acodera/shopify-admin-mcp": patch
 ---
 
-Setup's authentication choice reads "Access token (legacy custom app)", without the token prefix.
+Setup's authentication choices read "Access token (legacy custom app)" and "Client ID and secret (dev dashboard app)", without the token prefix.

@@ -61,6 +61,7 @@ export async function verifyCredentials(store: string, auth: AuthAnswers): Promi
     apiVersion: DEFAULT_API_VERSION,
     readOnly: true,
     allowLiveThemeWrites: false,
+    disableThemeWrites: true,
     disableRawGraphql: false,
     auth:
       auth.mode === "access-token"

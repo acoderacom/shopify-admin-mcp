@@ -23,7 +23,12 @@ Run the setup wizard in your project folder:
 npx -y @acodera/shopify-admin-mcp@latest setup
 ```
 
-It checks your Node.js version, asks for your store and credentials and checks them, optionally adds the [Shopify Dev MCP](https://shopify.dev/docs/apps/build/devmcp) server and advanced settings, and creates or updates `.mcp.json`. It can also set up a Horizon theme project: any version of Shopify's [Horizon](https://github.com/Shopify/horizon) theme in `./theme` (the store's live version is preselected), plus `CLAUDE.md`, `THEME.md` and `customizations.md` from [acoderacom/claude-horizon](https://github.com/acoderacom/claude-horizon), with the store and live theme filled in to `CLAUDE.md`. Current values are prefilled and other servers are kept. The secret is saved in plain text, so the file is written readable only by you and added to `.gitignore` in a git repo. Restart Claude Code (or run `/mcp`) to connect.
+It checks your Node.js version, then asks what to set up:
+
+- **Connect to a store only**: asks for your store and credentials, checks them, optionally adds the [Shopify Dev MCP](https://shopify.dev/docs/apps/build/devmcp) server and advanced settings, and creates or updates `.mcp.json`. Theme edits are turned off (`--disable-theme-writes`), so the assistant can read themes but not change them.
+- **Full theme design**: also downloads Shopify's [Horizon](https://github.com/Shopify/horizon) theme into `./theme` and writes `CLAUDE.md`, `THEME.md` and `customizations.md` from [acoderacom/claude-horizon](https://github.com/acoderacom/claude-horizon), with the store and live theme filled in to `CLAUDE.md`. It switches on what `CLAUDE.md` describes: live theme writes, uploads from `./uploads`, and the Shopify Dev MCP. The store's live theme must be a Horizon version the template covers; otherwise setup says which version to upgrade or downgrade to and stops without writing anything.
+
+Current values are prefilled and other servers are kept. The secret is saved in plain text, so the file is written readable only by you and added to `.gitignore` in a git repo. Restart Claude Code (or run `/mcp`) to connect.
 
 ### Manual setup
 
@@ -107,6 +112,7 @@ A few inputs follow API 2026-10: collections define their products with `sources
 - **Read-only mode** (`--read-only`) registers only tools that read data and rejects mutations in raw GraphQL. The document is parsed, so comments or extra operations can't slip one through. Use it whenever the assistant doesn't need to change the store: product descriptions and customer notes are written by other people and can carry instructions.
 - **Toolsets** (`--toolsets products,orders`) shorten the tool list, but raw GraphQL can still reach anything your scopes allow. Add `--disable-raw-graphql` to keep the assistant to the selected toolsets. Either way, the app's scopes are the real limit.
 - **The live theme** is protected: theme file writes and deletes on the published (`MAIN`) theme are refused, including through raw GraphQL, where `themePublish` is refused too. Duplicate the theme, edit the copy, and publish it from the Shopify admin, or start with `--allow-live-theme-writes`.
+- **Theme edits** can be turned off entirely with `--disable-theme-writes`: the theme write tools are left out, and raw GraphQL refuses every theme mutation (file writes, `themeCreate`, `themeUpdate`, `themeDelete`, `themeDuplicate`, `themePublish`) whichever theme it targets. It overrides `--allow-live-theme-writes`, and setup's "Connect to a store only" mode turns it on.
 - **Local uploads** are off until you set `--upload-dir`. `shopify_file_upload` then accepts files inside that folder (symlinks resolved), as well as public URLs that Shopify fetches itself.
 - **Credentials** are only ever sent to `*.myshopify.com`, and the server warns when secrets are passed as flags, since other processes can see them.
 
@@ -125,6 +131,7 @@ Every option works as a flag after the package name (in `args`) or as an environ
 | `--upload-dir` | `SHOPIFY_UPLOAD_DIR` | off | Absolute path that local uploads are confined to |
 | `--read-only` | `SHOPIFY_READ_ONLY` | off | Read tools only, no mutations |
 | `--allow-live-theme-writes` | `SHOPIFY_ALLOW_LIVE_THEME_WRITES` | off | Allow writing to and publishing the live theme |
+| `--disable-theme-writes` | `SHOPIFY_DISABLE_THEME_WRITES` | off | Refuse every theme change; overrides `--allow-live-theme-writes` |
 | `--disable-raw-graphql` | `SHOPIFY_DISABLE_RAW_GRAPHQL` | off | Leave out `shopify_graphql` |
 
 For example: `"args": ["-y", "@acodera/shopify-admin-mcp", "--read-only", "--toolsets", "products,orders,customers"]`.

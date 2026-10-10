@@ -212,3 +212,41 @@ describe("shopify_theme_files_get", () => {
     expect(result.isError).toBeFalsy();
   });
 });
+
+describe("with theme edits disabled", () => {
+  it("registers only the tools that read themes", async () => {
+    const { client } = await connect({ disableThemeWrites: true, allowLiveThemeWrites: true });
+
+    const names = (await client.listTools()).tools.map((tool) => tool.name).filter((name) => name.includes("theme"));
+    expect(names.sort()).toEqual(["shopify_theme_files_get", "shopify_theme_files_list", "shopify_themes_list"]);
+  });
+
+  it("refuses every theme mutation in raw GraphQL, without asking Shopify", async () => {
+    const { client, fake } = await connect({ disableThemeWrites: true, allowLiveThemeWrites: true });
+
+    for (const query of [
+      `mutation { themeFilesUpsert(themeId: "${THEME}", files: [{ filename: "a.liquid", body: { type: TEXT, value: "x" } }]) { userErrors { message } } }`,
+      `mutation { themeCreate(source: "https://example.com/theme.zip", name: "Copy") { theme { id } } }`,
+      `mutation Spread { ...Publish } fragment Publish on Mutation { themePublish(id: "${THEME}") { theme { id } } }`,
+    ]) {
+      const result = await callTool(client, "shopify_graphql", { query });
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain("theme edits are disabled on this server");
+    }
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("still forwards queries and other mutations", async () => {
+    const { client, fake } = await connect({ disableThemeWrites: true });
+    fake.responses.push({ data: { themes: { nodes: [] } } }, { data: { productDelete: { deletedProductId: null } } });
+
+    const read = await callTool(client, "shopify_graphql", { query: "{ themes(first: 5) { nodes { id } } }" });
+    const write = await callTool(client, "shopify_graphql", {
+      query: 'mutation { productDelete(input: { id: "gid://shopify/Product/1" }) { deletedProductId } }',
+    });
+
+    expect(read.isError, resultText(read)).toBeFalsy();
+    expect(write.isError, resultText(write)).toBeFalsy();
+    expect(fake.calls).toHaveLength(2);
+  });
+});

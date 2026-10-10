@@ -6,6 +6,7 @@ import {
   READ_ONLY,
   WRITE,
   pageSize,
+  readOnlyRegistrar,
   toolResult,
   type ToolRegistrar,
 } from "./shared.js";
@@ -36,10 +37,12 @@ function errorResult(message: string) {
 }
 
 export function registerThemeTools(
-  server: ToolRegistrar,
+  registrar: ToolRegistrar,
   client: GraphQLClient,
   options: ServerOptions
 ) {
+  // With theme edits disabled, only the tools that read themes are registered
+  const server = options.disableThemeWrites ? readOnlyRegistrar(registrar) : registrar;
   server.registerTool(
     "shopify_themes_list",
     {

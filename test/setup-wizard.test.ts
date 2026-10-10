@@ -12,6 +12,7 @@ import { runWizard, type WizardOptions } from "../src/setup/wizard.js";
 
 const ENTER = "\r";
 const DOWN = "\u001B[B";
+const UP = "\u001B[A";
 const ANSI = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 
 const ADMIN_NODE: NodeCheck = { label: "Shopify Admin MCP", range: ">=22.12.0", ok: true };
@@ -114,33 +115,45 @@ function setup(options: Partial<WizardOptions> = {}) {
 type Wizard = ReturnType<typeof setup>;
 const savedAnswers = (save: Wizard["save"]): SetupAnswers => save.mock.calls[0]![0];
 
-const PROJECT_QUESTION = "Set up a Horizon theme project here?";
+const MODE_QUESTION = "What do you want to set up?";
 
-// Store and access token, checked, up to the Horizon project question
-async function toProject({ waitFor, press }: Wizard, token = "shpat_x") {
+// Connect to a store only, then the store and access token, checked
+async function toConnect({ waitFor, press }: Wizard, token = "shpat_x") {
+  await waitFor(MODE_QUESTION);
+  await press(ENTER);
   await waitFor("Store domain");
   await press("mystore", ENTER);
   await waitFor("How does the app authenticate?");
   await press(ENTER);
   await waitFor("Admin API access token");
   await press(token, ENTER);
-  await waitFor(PROJECT_QUESTION);
+  await waitFor("Also add the Shopify Dev MCP server?");
 }
 
-// Then no project, no Shopify Dev MCP and no advanced settings: the shortest path to the summary
+// Then no Shopify Dev MCP and no advanced settings: the shortest path to the summary
 async function quickPath(wizard: Wizard, token = "shpat_x") {
-  await toProject(wizard, token);
-  await wizard.press(ENTER);
-  await wizard.waitFor("Also add the Shopify Dev MCP server?");
+  await toConnect(wizard, token);
   await wizard.press("n");
   await wizard.waitFor("Configure advanced settings?");
   await wizard.press(ENTER);
 }
 
+// Full theme development (already the default in a folder with a theme), then the store and access token
+async function toTheme({ waitFor, press }: Wizard, { preselected = false } = {}) {
+  await waitFor(MODE_QUESTION);
+  await press(...(preselected ? [ENTER] : [DOWN, ENTER]));
+  await waitFor("Store domain");
+  await press("mystore", ENTER);
+  await waitFor("How does the app authenticate?");
+  await press(ENTER);
+  await waitFor("Admin API access token");
+  await press("shpat_x", ENTER);
+}
+
 describe("setup wizard", () => {
   it("checks Node.js for both servers before asking anything", async () => {
     const { all, waitFor } = setup();
-    await waitFor("Store domain");
+    await waitFor(MODE_QUESTION);
 
     expect(all()).toContain("Node.js v24.15.0");
     expect(all()).toContain("Shopify Admin MCP needs Node.js >=22.12.0");
@@ -149,6 +162,8 @@ describe("setup wizard", () => {
 
   it("walks a new config through store, access token, a credentials check, and Shopify Dev MCP", async () => {
     const { outcome, all, recent, waitFor, press, verify, save, downloadHorizon } = setup();
+    await waitFor(MODE_QUESTION);
+    await press(ENTER);
     await waitFor("Store domain");
 
     await press("mystore", ENTER);
@@ -159,8 +174,6 @@ describe("setup wizard", () => {
     // Checked right away, before the other questions
     await waitFor("Connected to My Store");
     expect(verify).toHaveBeenCalledWith("mystore.myshopify.com", { mode: "access-token", accessToken: "shpat_secret" });
-    await waitFor(PROJECT_QUESTION);
-    await press(ENTER);
     await waitFor("Also add the Shopify Dev MCP server?");
     await press(ENTER);
     await waitFor("Configure advanced settings?");
@@ -168,6 +181,8 @@ describe("setup wizard", () => {
     await waitFor("Save .mcp.json?");
 
     expect(all()).not.toContain("shpat_secret");
+    expect(all()).toContain("Mode: Connect to a store only");
+    expect(all()).toContain("Theme edits: off");
     expect(all()).not.toContain("Horizon project:");
 
     await press(ENTER);
@@ -177,6 +192,7 @@ describe("setup wizard", () => {
       auth: { mode: "access-token", accessToken: "shpat_secret" },
       includeDevMcp: true,
       advanced: undefined,
+      disableThemeWrites: true,
     });
     expect(downloadHorizon).not.toHaveBeenCalled();
     expect(recent()).toContain("Added .mcp.json to .gitignore");
@@ -184,6 +200,8 @@ describe("setup wizard", () => {
 
   it("rejects a store outside myshopify.com", async () => {
     const { waitFor, press } = setup();
+    await waitFor(MODE_QUESTION);
+    await press(ENTER);
     await waitFor("Store domain");
 
     await press("evil.com/x", ENTER);
@@ -200,14 +218,14 @@ describe("setup wizard", () => {
       },
     });
     const { outcome, waitFor, press, save } = setup({ existing });
+    await waitFor(MODE_QUESTION);
+    await press(ENTER);
     await waitFor("Store domain");
 
     await press(ENTER);
     await waitFor("How does the app authenticate?");
     await press(ENTER);
     await waitFor("press Enter to keep the current one");
-    await press(ENTER);
-    await waitFor(PROJECT_QUESTION);
     await press(ENTER);
     // No Shopify Dev MCP in the file, so not adding it is the default
     await waitFor("Also add the Shopify Dev MCP server?");
@@ -227,6 +245,8 @@ describe("setup wizard", () => {
 
   it("collects client credentials and advanced settings, creating an uploads folder", async () => {
     const { outcome, waitFor, press, save } = setup();
+    await waitFor(MODE_QUESTION);
+    await press(ENTER);
     await waitFor("Store domain");
 
     await press("mystore.myshopify.com", ENTER);
@@ -236,16 +256,12 @@ describe("setup wizard", () => {
     await press("client-id", ENTER);
     await waitFor("Client secret");
     await press("client-secret", ENTER);
-    await waitFor(PROJECT_QUESTION);
-    await press(ENTER);
     await waitFor("Also add the Shopify Dev MCP server?");
     await press("n");
     await waitFor("Configure advanced settings?");
     await press("y");
     await waitFor("Read-only mode?");
     await press("n");
-    await waitFor("Allow edits to the live");
-    await press("y");
     await waitFor("Local file uploads");
     await press(ENTER);
     await waitFor("Toolsets to register");
@@ -261,9 +277,10 @@ describe("setup wizard", () => {
       store: "mystore.myshopify.com",
       auth: { mode: "client-credentials", clientId: "client-id", clientSecret: "client-secret" },
       includeDevMcp: false,
+      disableThemeWrites: true,
       advanced: {
         readOnly: false,
-        allowLiveThemeWrites: true,
+        allowLiveThemeWrites: false,
         uploadDir: path.join(cwd, "uploads"),
         toolsets: ["collections", "publishing", "metafields", "metaobjects", "customers", "orders", "inventory", "discounts", "files", "themes", "markets"],
         disableRawGraphql: true,
@@ -276,15 +293,11 @@ describe("setup wizard", () => {
     const wizard = setup();
     const { outcome, recent, waitFor, press, save } = wizard;
 
-    await toProject(wizard);
-    await press(ENTER);
-    await waitFor("Also add the Shopify Dev MCP server?");
+    await toConnect(wizard);
     await press("n");
     await waitFor("Configure advanced settings?");
     await press("y");
     await waitFor("Read-only mode?");
-    await press("n");
-    await waitFor("Allow edits to the live");
     await press("n");
     await waitFor("Local file uploads");
     expect(recent()).toContain(`Use ${path.join(cwd, "uploads")}`);
@@ -310,6 +323,8 @@ describe("setup wizard", () => {
       .mockResolvedValueOnce({ ok: false, message: "Shopify API request failed (401)" })
       .mockResolvedValueOnce(CONNECTED);
     const { outcome, waitFor, press, save } = setup({ verify });
+    await waitFor(MODE_QUESTION);
+    await press(ENTER);
     await waitFor("Store domain");
 
     await press("mystore", ENTER);
@@ -328,8 +343,6 @@ describe("setup wizard", () => {
     await waitFor("press Enter to keep the current one");
     await press("shpat_right", ENTER);
     await waitFor("Connected to My Store");
-    await waitFor(PROJECT_QUESTION);
-    await press(ENTER);
     await waitFor("Also add the Shopify Dev MCP server?");
     await press("n");
     await waitFor("Configure advanced settings?");
@@ -373,11 +386,17 @@ describe("setup wizard", () => {
       checkDevMcpNode: async () => ({ ...DEV_NODE, ok: false }),
     });
     const { outcome, all, waitFor, press, save } = wizard;
-    await waitFor("Store domain");
+    await waitFor(MODE_QUESTION);
     expect(all()).toContain("Shopify Dev MCP needs Node.js >=22.12.0, but this is v22.0.0");
 
-    await toProject(wizard);
+    await waitFor(MODE_QUESTION);
     await press(ENTER);
+    await waitFor("Store domain");
+    await press("mystore", ENTER);
+    await waitFor("How does the app authenticate?");
+    await press(ENTER);
+    await waitFor("Admin API access token");
+    await press("shpat_x", ENTER);
     await waitFor("won't start on v22.0.0 until you upgrade");
     await waitFor("Also add the Shopify Dev MCP server?");
     await press(ENTER);
@@ -392,31 +411,26 @@ describe("setup wizard", () => {
 });
 
 describe("setup wizard: Horizon project", () => {
-  it("sets up the theme and docs, preselecting the live theme's version, with the settings CLAUDE.md needs", async () => {
-    const verify = vi.fn<WizardOptions["verify"]>(async () => ({
-      ...CONNECTED,
-      passwordProtected: true,
-      liveTheme: { ...LIVE_THEME, version: "4.1.5" },
-    }));
+  it("sets up the theme and docs when the live theme matches the template, with the settings CLAUDE.md needs", async () => {
+    const verify = vi.fn<WizardOptions["verify"]>(async () => ({ ...CONNECTED, passwordProtected: true }));
     const wizard = setup({ verify });
     const { outcome, all, recent, waitFor, press, save, downloadHorizon, writeProjectDocs } = wizard;
 
-    await toProject(wizard);
-    await press("y");
+    await toTheme(wizard);
     await waitFor("Which Horizon version?");
-    expect(recent()).toContain('The live theme is Horizon 4.1.5, "Horizon".');
-    expect(recent()).toContain("Found 2 Horizon versions");
-    expect(recent()).toContain("v4.1.5 (live theme, Aug 31, 2026)");
+    expect(all()).toContain("Template: Horizon 4.2.0 (acoderacom/claude-horizon)");
+    expect(recent()).toContain('The live theme "Horizon" is Horizon 4.2.0, which matches the template.');
+    expect(recent()).toContain("v4.2.0 (recommended: matches the template and live theme, Sep 18, 2026)");
     await press(ENTER);
-    // The template has docs only for 4.2.0
-    await waitFor("There's no THEME.md for Horizon 4.1.5 yet, so the one for 4.2.0 is used");
     await waitFor("The storefront has a password");
     await press("123", ENTER);
     await waitFor("Save .mcp.json?");
     expect(recent()).toContain("so those are switched on");
     expect(all()).not.toContain("Also add the Shopify Dev MCP server?");
     expect(all()).not.toContain("Configure advanced settings?");
-    expect(all()).toContain("Horizon project: v4.1.5 into ./theme, docs for 4.2.0");
+    expect(all()).toContain("Mode: Full theme design");
+    expect(all()).toContain("Theme edits: on, including the live theme");
+    expect(all()).toContain("Horizon project: v4.2.0 into ./theme, docs for 4.2.0");
     expect(all()).toContain(`Advanced: live theme writes allowed; uploads from ${path.join(cwd, "uploads")}`);
     expect(downloadHorizon).not.toHaveBeenCalled();
     await press(ENTER);
@@ -424,23 +438,95 @@ describe("setup wizard: Horizon project", () => {
     await expect(outcome).resolves.toBe("saved");
     expect(savedAnswers(save)).toMatchObject({
       includeDevMcp: true,
+      disableThemeWrites: false,
       advanced: { readOnly: false, allowLiveThemeWrites: true, uploadDir: path.join(cwd, "uploads"), disableRawGraphql: false },
     });
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(downloadHorizon.mock.invocationCallOrder[0]!);
-    expect(downloadHorizon).toHaveBeenCalledWith(HORIZON_VERSIONS[1]);
+    expect(downloadHorizon).toHaveBeenCalledWith(HORIZON_VERSIONS[0]);
     expect(writeProjectDocs).toHaveBeenCalledWith({
       docsVersion: "4.2.0",
       replaceThemeMd: false,
       details: {
         store: "mystore.myshopify.com",
         devStore: true,
-        liveTheme: { id: "gid://shopify/OnlineStoreTheme/111", version: "4.1.5" },
+        liveTheme: { id: "gid://shopify/OnlineStoreTheme/111", version: "4.2.0" },
         passwordProtected: true,
         storefrontPassword: "123",
       },
     });
-    expect(recent()).toContain(`Downloaded Horizon v4.1.5 into ${path.join(cwd, "theme")} (484 files)`);
+    expect(recent()).toContain(`Downloaded Horizon v4.2.0 into ${path.join(cwd, "theme")} (484 files)`);
     expect(recent()).toContain("Project docs for Horizon 4.2.0: CLAUDE.md created, THEME.md created, customizations.md created");
+  });
+
+  it("matches an older version the template also covers, and warns when another version is picked", async () => {
+    const verify = vi.fn<WizardOptions["verify"]>(async () => ({ ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.1.5" } }));
+    const wizard = setup({ verify, listDocsVersions: async () => ["4.2.0", "4.1.5"] });
+    const { outcome, all, recent, waitFor, press, downloadHorizon, writeProjectDocs } = wizard;
+
+    await toTheme(wizard);
+    await waitFor("Which Horizon version?");
+    expect(all()).toContain("Template: Horizon 4.2.0, 4.1.5 (acoderacom/claude-horizon)");
+    expect(recent()).toContain("is Horizon 4.1.5, which matches the template.");
+    expect(recent()).toContain("v4.1.5 (recommended: matches the template and live theme");
+    await press(UP, ENTER);
+    await waitFor("./theme will hold Horizon 4.2.0, but the live theme and THEME.md are Horizon 4.1.5.");
+    await waitFor("Save .mcp.json?");
+    await press(ENTER);
+
+    await expect(outcome).resolves.toBe("saved");
+    expect(downloadHorizon).toHaveBeenCalledWith(HORIZON_VERSIONS[0]);
+    expect(writeProjectDocs.mock.calls[0]![0]).toMatchObject({ docsVersion: "4.1.5" });
+  });
+
+  it.each([
+    [
+      "older than the template",
+      { ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.1.3" } },
+      'The live theme "Horizon" is Horizon 4.1.3, older than the template\'s Horizon 4.2.0. Upgrade it to Horizon 4.2.0 in the Shopify admin, then run setup again.',
+    ],
+    [
+      "newer than the template",
+      { ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.3.0" } },
+      "is Horizon 4.3.0, newer than the template's Horizon 4.2.0. Downgrade it to Horizon 4.2.0, or wait for the template to cover 4.3.0",
+    ],
+    [
+      "not Horizon",
+      { ...CONNECTED, liveTheme: { id: "gid://shopify/OnlineStoreTheme/9", name: "Dawn", themeName: "Dawn", version: "15.0.0" } },
+      'The live theme "Dawn" isn\'t Horizon. Publish Horizon 4.2.0 in the Shopify admin, then run setup again.',
+    ],
+    [
+      "unreadable",
+      { ...CONNECTED, liveTheme: undefined, liveThemeError: "Access denied for themes field" },
+      "Couldn't read the live theme (Access denied for themes field), so setup can't check it's the template's Horizon 4.2.0.",
+    ],
+  ] as const)("stops the whole setup when the live theme is %s", async (_case, result, notice) => {
+    const wizard = setup({ verify: async () => result });
+    const { outcome, recent, waitFor, press, save, downloadHorizon } = wizard;
+
+    await toTheme(wizard);
+    await waitFor(notice);
+
+    await expect(outcome).resolves.toBe("stopped");
+    expect(recent()).toContain("Setup stopped. .mcp.json wasn't changed.");
+    expect(save).not.toHaveBeenCalled();
+    expect(downloadHorizon).not.toHaveBeenCalled();
+  });
+
+  it("stops the whole setup when GitHub can't list the template versions", async () => {
+    const wizard = setup({
+      listDocsVersions: async () => Promise.reject(new Error("GitHub's rate limit was reached, so try again in an hour")),
+    });
+    const { outcome, all, waitFor, press, verify, save } = wizard;
+
+    await waitFor(MODE_QUESTION);
+    await press(DOWN, ENTER);
+    await waitFor("Couldn't get the template versions from acoderacom/claude-horizon: GitHub's rate limit was reached");
+
+    await expect(outcome).resolves.toBe("stopped");
+    expect(all()).toContain("Setup stopped. .mcp.json wasn't changed.");
+    expect(all()).not.toContain("Store domain");
+    expect(verify).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("replaces theme files and THEME.md only when that's confirmed", async () => {
@@ -450,8 +536,10 @@ describe("setup wizard: Horizon project", () => {
     const wizard = setup();
     const { outcome, all, waitFor, press, downloadHorizon, writeProjectDocs } = wizard;
 
-    await toProject(wizard);
-    await press("y");
+    await waitFor(MODE_QUESTION);
+    // A folder that already has a theme defaults to theme design
+    expect(all()).toContain("● Full theme design");
+    await toTheme(wizard, { preselected: true });
     await waitFor("Which Horizon version?");
     await press(ENTER);
     await waitFor("Replace the files in ./theme and THEME.md with Horizon v4.2.0?");
@@ -467,70 +555,35 @@ describe("setup wizard: Horizon project", () => {
     expect(writeProjectDocs.mock.calls[0]![0]).toMatchObject({ replaceThemeMd: true });
   });
 
-  it("leaves current files alone by default, going on without a project", async () => {
+  it("cancels when replacing the current files is declined, the default", async () => {
     await mkdir(path.join(cwd, "theme"));
     await writeFile(path.join(cwd, "theme", "custom.liquid"), "mine");
     const wizard = setup();
-    const { outcome, waitFor, press, downloadHorizon, writeProjectDocs } = wizard;
+    const { outcome, recent, waitFor, press, save, downloadHorizon } = wizard;
 
-    await toProject(wizard);
-    await press("y");
+    await toTheme(wizard, { preselected: true });
     await waitFor("Which Horizon version?");
     await press(ENTER);
     await waitFor("Replace the files in ./theme with Horizon v4.2.0?");
     await press(ENTER);
-    await waitFor("Also add the Shopify Dev MCP server?");
-    await press("n");
-    await waitFor("Configure advanced settings?");
-    await press(ENTER);
-    await waitFor("Save .mcp.json?");
-    await press(ENTER);
 
-    await expect(outcome).resolves.toBe("saved");
+    await expect(outcome).resolves.toBe("cancelled");
+    expect(recent()).toContain("Cancelled. .mcp.json wasn't changed.");
+    expect(save).not.toHaveBeenCalled();
     expect(downloadHorizon).not.toHaveBeenCalled();
-    expect(writeProjectDocs).not.toHaveBeenCalled();
   });
 
-  it("warns when the live theme isn't Horizon, leaving its placeholders for Claude", async () => {
-    const verify = vi.fn<WizardOptions["verify"]>(async () => ({
-      ...CONNECTED,
-      liveTheme: { id: "gid://shopify/OnlineStoreTheme/9", name: "Dawn", themeName: "Dawn", version: "15.0.0" },
-    }));
-    const writeProjectDocs = vi.fn<WizardOptions["writeProjectDocs"]>(async () => ({ ...DOCS_CREATED, placeholdersLeft: true }));
-    const wizard = setup({ verify, writeProjectDocs });
+  it("offers no way past a failed credentials check, since theme design needs the live theme", async () => {
+    const wizard = setup({ verify: async () => ({ ok: false, message: "Shopify API request failed (401)" }) });
     const { outcome, recent, waitFor, press } = wizard;
 
-    await toProject(wizard);
-    await press("y");
-    await waitFor("Which Horizon version?");
-    expect(recent()).toContain('The live theme is "Dawn", not Horizon.');
-    await press(ENTER);
-    await waitFor("Save .mcp.json?");
-    await press(ENTER);
+    await toTheme(wizard);
+    await waitFor("What next?");
+    expect(recent()).toContain("Re-enter the store and credentials");
+    expect(recent()).not.toContain("Continue anyway");
+    await press(DOWN, ENTER);
 
-    await expect(outcome).resolves.toBe("saved");
-    expect(writeProjectDocs.mock.calls[0]![0].details.liveTheme).toBeUndefined();
-    expect(recent()).toContain("CLAUDE.md still has [agent: …] placeholders. Ask Claude to fill them in.");
-  });
-
-  it("goes on without a project when GitHub can't list Horizon versions", async () => {
-    const wizard = setup({
-      listHorizonVersions: async () => Promise.reject(new Error("GitHub's rate limit was reached, so try again in an hour")),
-    });
-    const { outcome, waitFor, press, downloadHorizon } = wizard;
-
-    await toProject(wizard);
-    await press("y");
-    await waitFor("Couldn't get Horizon versions: GitHub's rate limit was reached");
-    await waitFor("Also add the Shopify Dev MCP server?");
-    await press("n");
-    await waitFor("Configure advanced settings?");
-    await press(ENTER);
-    await waitFor("Save .mcp.json?");
-    await press(ENTER);
-
-    await expect(outcome).resolves.toBe("saved");
-    expect(downloadHorizon).not.toHaveBeenCalled();
+    await expect(outcome).resolves.toBe("cancelled");
   });
 
   it("still writes the docs when the theme download fails, and reports it", async () => {
@@ -538,8 +591,7 @@ describe("setup wizard: Horizon project", () => {
     const wizard = setup({ downloadHorizon });
     const { outcome, recent, waitFor, press, save, writeProjectDocs } = wizard;
 
-    await toProject(wizard);
-    await press("y");
+    await toTheme(wizard);
     await waitFor("Which Horizon version?");
     await press(ENTER);
     await waitFor("Save .mcp.json?");
@@ -552,25 +604,16 @@ describe("setup wizard: Horizon project", () => {
     expect(recent()).toContain(".mcp.json is saved. Run setup again to finish the Horizon project.");
   });
 
-  it("doesn't offer a project when ./theme is a file", async () => {
+  it("stops theme design when ./theme is a file", async () => {
     await writeFile(path.join(cwd, "theme"), "");
-    const { outcome, recent, waitFor, press } = setup();
-    await waitFor("Store domain");
+    const { outcome, all, waitFor, press, save } = setup();
 
-    await press("mystore", ENTER);
-    await waitFor("How does the app authenticate?");
-    await press(ENTER);
-    await waitFor("Admin API access token");
-    await press("shpat_x", ENTER);
-    await waitFor("is a file, so setup can't set up a Horizon theme project here.");
-    await waitFor("Also add the Shopify Dev MCP server?");
-    expect(recent()).not.toContain(PROJECT_QUESTION);
-    await press("n");
-    await waitFor("Configure advanced settings?");
-    await press(ENTER);
-    await waitFor("Save .mcp.json?");
-    await press(ENTER);
+    await waitFor(MODE_QUESTION);
+    await press(DOWN, ENTER);
+    await waitFor("is a file, so setup can't put the Horizon theme there. Move it, then run setup again.");
 
-    await expect(outcome).resolves.toBe("saved");
+    await expect(outcome).resolves.toBe("stopped");
+    expect(all()).not.toContain("Store domain");
+    expect(save).not.toHaveBeenCalled();
   });
 });

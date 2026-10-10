@@ -1,5 +1,11 @@
 # @acodera/shopify-admin-mcp
 
+## 1.7.0
+
+### Minor Changes
+
+- [#28](https://github.com/acoderacom/shopify-admin-mcp/pull/28) [`a852a81`](https://github.com/acoderacom/shopify-admin-mcp/commit/a852a81bba5e78302bae15a7aa6d49f27f876e40) Thanks [@acoderacom](https://github.com/acoderacom)! - Full theme design now follows acoderacom/claude-horizon's `versions.json`. A live theme on any supported version matches, and the project gets that exact Horizon commit and its `versions/<version>/THEME.md`, with the version filled in to `CLAUDE.md` and `customizations.md`; there's no version menu anymore. When the live theme is older, newer or not Horizon, setup explains that the Shopify theme store only installs the newest Horizon and offers to save an upload-ready `horizon-<version>.zip` to upload in the Shopify admin, then stops. Setup reads the template and Horizon from GitHub without its API, so its rate limit no longer applies.
+
 ## 1.6.0
 
 ### Minor Changes

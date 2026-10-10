@@ -13,6 +13,7 @@ const ENV_KEYS = [
   "SHOPIFY_UPLOAD_DIR",
   "SHOPIFY_ALLOW_LIVE_THEME_WRITES",
   "SHOPIFY_DISABLE_RAW_GRAPHQL",
+  "SHOPIFY_DISABLE_THEME_WRITES",
 ];
 
 const parse = (...args: string[]) => parseArgs(["node", "shopify-admin-mcp", ...args]);
@@ -39,6 +40,7 @@ describe("parseArgs", () => {
       apiVersion: "2026-10",
       readOnly: false,
       allowLiveThemeWrites: false,
+      disableThemeWrites: false,
       disableRawGraphql: false,
       auth: { mode: "access-token", accessToken: "shpat_x" },
     });
@@ -84,6 +86,7 @@ describe("parseArgs", () => {
       apiVersion: "2026-07",
       readOnly: true,
       allowLiveThemeWrites: false,
+      disableThemeWrites: false,
       disableRawGraphql: false,
       auth: { mode: "client-credentials", clientId: "id", clientSecret: "secret" },
     });
@@ -129,6 +132,12 @@ describe("parseArgs", () => {
     expect(parse("--store", "s", "--access-token", "t", "--disable-raw-graphql").disableRawGraphql).toBe(true);
     vi.stubEnv("SHOPIFY_DISABLE_RAW_GRAPHQL", "true");
     expect(parse("--store", "s", "--access-token", "t").disableRawGraphql).toBe(true);
+  });
+
+  it("disables theme edits with --disable-theme-writes or SHOPIFY_DISABLE_THEME_WRITES", () => {
+    expect(parse("--store", "s", "--access-token", "t", "--disable-theme-writes").disableThemeWrites).toBe(true);
+    vi.stubEnv("SHOPIFY_DISABLE_THEME_WRITES", "true");
+    expect(parse("--store", "s", "--access-token", "t").disableThemeWrites).toBe(true);
   });
 
   it("rejects unknown toolsets", () => {

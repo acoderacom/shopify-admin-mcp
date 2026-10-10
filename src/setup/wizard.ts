@@ -52,6 +52,20 @@ class Cancelled extends Error {}
 // Ends setup without writing anything, after saying why
 class Stopped extends Error {}
 
+type Mode = "connect" | "theme";
+
+const MODE_LABELS: Record<Mode, string> = {
+  connect: "Connect to a store only",
+  theme: "Full theme design",
+};
+
+// What theme development downloads from, checked before the store questions
+interface ProjectSources {
+  /** Horizon versions the template has docs for, newest first. */
+  docsVersions: string[];
+  versions: HorizonVersion[];
+}
+
 interface ProjectAnswer {
   horizon: HorizonVersion;
   /** The Horizon version whose docs are used. */
@@ -214,19 +228,9 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     const readOnly = await ask(
       p.confirm({ ...io, message: "Read-only mode? Only tools that read store data are available.", initialValue: draft.readOnly })
     );
-    // Write tools are hidden in read-only mode, so their settings don't apply
-    let allowLiveThemeWrites = false;
-    let uploadDir = draft.uploadDir;
-    if (!readOnly) {
-      allowLiveThemeWrites = await ask(
-        p.confirm({
-          ...io,
-          message: "Allow edits to the live (published) theme? Otherwise the assistant edits a copy.",
-          initialValue: draft.allowLiveThemeWrites,
-        })
-      );
-      uploadDir = await askUploadDir(draft.uploadDir);
-    }
+    // Write tools are hidden in read-only mode, so the upload folder doesn't apply. Theme edits are
+    // off in this mode, so there's no live theme setting to ask about.
+    const uploadDir = readOnly ? draft.uploadDir : await askUploadDir(draft.uploadDir);
     const picked = await ask(
       p.multiselect<Toolset>({
         ...io,
@@ -247,31 +251,21 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     );
     return {
       readOnly,
-      allowLiveThemeWrites,
+      allowLiveThemeWrites: false,
       uploadDir,
       toolsets: toolsets.length === TOOLSETS.length ? undefined : toolsets,
       disableRawGraphql,
     };
   };
 
-  // A Horizon project: the theme from Shopify, and CLAUDE.md, THEME.md and customizations.md from the
-  // template. The live theme must be a Horizon version the template covers, or setup stops.
-  const askProject = async (info: StoreInfo | undefined): Promise<ProjectAnswer | undefined> => {
+  // Theme development: the theme from Shopify, and CLAUDE.md, THEME.md and customizations.md from the
+  // template. Its sources are checked first, so a problem shows before any store questions.
+  const checkSources = async (): Promise<ProjectSources> => {
     const themeDir = path.join(cwd, THEME_DIR);
-    const kind = pathKind(themeDir);
-    if (kind === "file") {
-      p.log.warn(`${themeDir} is a file, so setup can't set up a Horizon theme project here.`, io);
-      return undefined;
+    if (pathKind(themeDir) === "file") {
+      p.log.warn(`${themeDir} is a file, so setup can't put the Horizon theme there. Move it, then run setup again.`, io);
+      throw new Stopped();
     }
-    const wanted = await ask(
-      p.confirm({
-        ...io,
-        message: `Set up a Horizon theme project here? (./${THEME_DIR} from Shopify, plus CLAUDE.md, THEME.md and customizations.md)`,
-        initialValue: false,
-      })
-    );
-    if (!wanted) return undefined;
-
     const listing = p.spinner(io);
     listing.start("Checking the template and Horizon versions on GitHub");
     const [docs, themes] = await Promise.allSettled([options.listDocsVersions(), options.listHorizonVersions()]);
@@ -288,7 +282,12 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       throw new Stopped();
     }
     listing.stop(`Template: Horizon ${docsVersions.join(", ")} (${TEMPLATE_REPO})`);
+    return { docsVersions, versions };
+  };
 
+  // After the credentials check. The live theme must be a Horizon version the template covers, or setup stops.
+  const askProject = async (info: StoreInfo | undefined, { docsVersions, versions }: ProjectSources): Promise<ProjectAnswer> => {
+    const themeDir = path.join(cwd, THEME_DIR);
     const live = info?.liveTheme;
     const check = checkLiveTheme(live, info ? (info.liveThemeError ?? "no reason given") : "the credentials check didn't pass", docsVersions);
     const name = live ? ` "${live.name}"` : "";
@@ -355,7 +354,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     const docsVersion = recommended.version;
 
     const current = [
-      kind === "folder" && readdirSync(themeDir).length > 0 ? `the files in ./${THEME_DIR}` : "",
+      pathKind(themeDir) === "folder" && readdirSync(themeDir).length > 0 ? `the files in ./${THEME_DIR}` : "",
       pathKind(path.join(cwd, "THEME.md")) === "file" ? "THEME.md" : "",
     ].filter(Boolean);
     const replace = current.length > 0;
@@ -369,7 +368,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         })
       ))
     ) {
-      return undefined;
+      throw new Cancelled();
     }
 
     let storefrontPassword: string | undefined;
@@ -402,6 +401,25 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       (check.ok ? p.log.success : p.log.warn)(describeNode(check, nodeVersion), io);
     }
 
+    // A folder that already has a theme was most likely set up for theme development
+    const themeProject = pathKind(path.join(cwd, THEME_DIR)) === "folder" || pathKind(path.join(cwd, "THEME.md")) === "file";
+    const mode = await ask(
+      p.select<Mode>({
+        ...io,
+        message: "What do you want to set up?",
+        initialValue: themeProject ? "theme" : "connect",
+        options: [
+          { value: "connect", label: MODE_LABELS.connect, hint: ".mcp.json for Claude Code, without theme edits" },
+          {
+            value: "theme",
+            label: MODE_LABELS.theme,
+            hint: `Horizon in ./${THEME_DIR}, plus CLAUDE.md, THEME.md and customizations.md`,
+          },
+        ],
+      })
+    );
+    const sources = mode === "theme" ? await checkSources() : undefined;
+
     let store = await askStore(existing.store ?? "");
     let auth = await askAuth(undefined);
 
@@ -422,7 +440,8 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
           message: "What next?",
           options: [
             { value: "retry", label: "Re-enter the store and credentials" },
-            { value: "continue", label: "Continue anyway" },
+            // Theme development needs the live theme, so it can't go on without the store
+            ...(mode === "connect" ? [{ value: "continue", label: "Continue anyway" }] : []),
             { value: "cancel", label: "Cancel" },
           ],
         })
@@ -433,7 +452,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       auth = await askAuth(auth);
     }
 
-    const project = await askProject(info);
+    const project = sources ? await askProject(info, sources) : undefined;
 
     let includeDevMcp: boolean;
     let advanced: AdvancedAnswers | undefined;
@@ -469,7 +488,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       advanced = (await ask(
         p.confirm({
           ...io,
-          message: "Configure advanced settings? (read-only, live theme writes, upload folder, toolsets, raw GraphQL)",
+          message: "Configure advanced settings? (read-only, upload folder, toolsets, raw GraphQL)",
           initialValue: false,
         })
       ))
@@ -482,11 +501,13 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       : existing.hasDevMcp ? "removed" : "not included";
     p.note(
       [
+        `Mode: ${MODE_LABELS[mode]}`,
         `File: ${file} (${existing.hasFile ? "update" : "new"})`,
         `Server: ${existing.serverName}`,
         `Store: ${store}`,
         `Authentication: ${AUTH_LABELS[auth.mode]}`,
         `Shopify Dev MCP: ${devMcpChange}`,
+        `Theme edits: ${mode === "connect" ? "off" : "on, including the live theme"}`,
         `Advanced: ${advanced ? describeAdvanced(advanced) : existing.hasServer ? "unchanged" : "defaults"}`,
         ...(project
           ? [
@@ -509,7 +530,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     saving.start(`Saving ${CONFIG_FILE}`);
     let result: SaveResult;
     try {
-      result = await save({ store, auth, includeDevMcp, advanced });
+      result = await save({ store, auth, includeDevMcp, advanced, disableThemeWrites: mode === "connect" });
     } catch (err) {
       saving.error(`Couldn't save ${CONFIG_FILE}: ${errorMessage(err)}`);
       return "failed";

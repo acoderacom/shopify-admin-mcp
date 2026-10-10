@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { GraphQLClient } from "../graphql/client.js";
 import type { ServerOptions } from "../server.js";
 import { DESTRUCTIVE, READ_ONLY, toolResult, type ToolRegistrar } from "./shared.js";
-import { rawLiveThemeGuard } from "./theme-guard.js";
+import { rawLiveThemeGuard, rawThemeWriteGuard } from "./theme-guard.js";
 
 function errorResult(message: string) {
   return {
@@ -32,6 +32,7 @@ function toolDescription(options: ServerOptions): string {
   }
   const base =
     "Execute a raw GraphQL query or mutation against the Shopify Admin API. Use shopify_schema_search to discover available queries, mutations, and types first.";
+  if (options.disableThemeWrites) return `${base} Theme mutations are refused because theme edits are disabled.`;
   return options.allowLiveThemeWrites
     ? base
     : `${base} Theme file writes to the live theme and themePublish are refused unless the server allows live theme writes.`;
@@ -65,6 +66,9 @@ export function registerGraphQLProxy(
               `${operation} operations are disabled because the server is running in read-only mode`
             );
           }
+        } else if (options.disableThemeWrites) {
+          const blocked = rawThemeWriteGuard(document);
+          if (blocked) return errorResult(blocked);
         } else if (!options.allowLiveThemeWrites) {
           // The theme tools' live-theme guard would mean little if raw GraphQL could skip it
           const blocked = await rawLiveThemeGuard(client, document, variables);

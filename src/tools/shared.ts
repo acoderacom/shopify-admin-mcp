@@ -55,7 +55,7 @@ function hasErrors(result: GraphQLResponse): boolean {
  * registerTool must return a handle, so write tools are registered and removed
  * before the transport connects.
  */
-export function readOnlyRegistrar(server: McpServer): ToolRegistrar {
+export function readOnlyRegistrar(server: ToolRegistrar): ToolRegistrar {
   return {
     registerTool(name, config, cb) {
       const tool = server.registerTool(name, config, cb);

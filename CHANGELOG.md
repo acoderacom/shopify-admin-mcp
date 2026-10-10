@@ -1,5 +1,15 @@
 # @acodera/shopify-admin-mcp
 
+## 1.4.0
+
+### Minor Changes
+
+- [#16](https://github.com/acoderacom/shopify-admin-mcp/pull/16) [`d9a835a`](https://github.com/acoderacom/shopify-admin-mcp/commit/d9a835a60427d1a61825ac2fcdf9d6690c0f12ed) Thanks [@acoderacom](https://github.com/acoderacom)! - Setup can now set up a Horizon theme project. It downloads any version of Shopify's Horizon theme into `./theme`, with the store's live version preselected, and writes `CLAUDE.md`, `THEME.md` and `customizations.md` from acoderacom/claude-horizon. `CLAUDE.md` gets the store, the live theme's ID and version, and the storefront password filled in. A project switches on the settings `CLAUDE.md` describes: live theme writes, uploads from `./uploads`, and the Shopify Dev MCP. Setup now checks the credentials right after you enter them. Replacing theme files or `THEME.md` asks first, and an existing `customizations.md` is always kept.
+
+### Patch Changes
+
+- [#15](https://github.com/acoderacom/shopify-admin-mcp/pull/15) [`636014a`](https://github.com/acoderacom/shopify-admin-mcp/commit/636014a09fc6aed6598ccfc1816349c00f63d5e6) Thanks [@acoderacom](https://github.com/acoderacom)! - The setup wizard's Node.js check calls this server "Shopify Admin MCP", matching "Shopify Dev MCP", instead of using the package name.
+
 ## 1.3.0
 
 ### Minor Changes

@@ -1,5 +1,11 @@
 # @acodera/shopify-admin-mcp
 
+## 1.6.0
+
+### Minor Changes
+
+- [#25](https://github.com/acoderacom/shopify-admin-mcp/pull/25) [`eec97fc`](https://github.com/acoderacom/shopify-admin-mcp/commit/eec97fc2b6f39d6d2f00a150c64acf2871662a70) Thanks [@acoderacom](https://github.com/acoderacom)! - Setup no longer has an advanced settings step. Connecting to a store only asks for the store, the credentials and the Shopify Dev MCP; read-only mode, toolsets, local uploads and raw GraphQL can still be set in `.mcp.json` by hand, and connecting to a store only keeps them. The summary's "Advanced" line is now "Settings" and shows what the file ends up with.
+
 ## 1.5.0
 
 ### Minor Changes

@@ -12,6 +12,7 @@ import { runWizard, type WizardOptions } from "../src/setup/wizard.js";
 
 const ENTER = "\r";
 const DOWN = "\u001B[B";
+const UP = "\u001B[A";
 const ANSI = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 
 const ADMIN_NODE: NodeCheck = { label: "Shopify Admin MCP", range: ">=22.12.0", ok: true };
@@ -392,31 +393,25 @@ describe("setup wizard", () => {
 });
 
 describe("setup wizard: Horizon project", () => {
-  it("sets up the theme and docs, preselecting the live theme's version, with the settings CLAUDE.md needs", async () => {
-    const verify = vi.fn<WizardOptions["verify"]>(async () => ({
-      ...CONNECTED,
-      passwordProtected: true,
-      liveTheme: { ...LIVE_THEME, version: "4.1.5" },
-    }));
+  it("sets up the theme and docs when the live theme matches the template, with the settings CLAUDE.md needs", async () => {
+    const verify = vi.fn<WizardOptions["verify"]>(async () => ({ ...CONNECTED, passwordProtected: true }));
     const wizard = setup({ verify });
     const { outcome, all, recent, waitFor, press, save, downloadHorizon, writeProjectDocs } = wizard;
 
     await toProject(wizard);
     await press("y");
     await waitFor("Which Horizon version?");
-    expect(recent()).toContain('The live theme is Horizon 4.1.5, "Horizon".');
-    expect(recent()).toContain("Found 2 Horizon versions");
-    expect(recent()).toContain("v4.1.5 (live theme, Aug 31, 2026)");
+    expect(recent()).toContain("Template: Horizon 4.2.0 (acoderacom/claude-horizon)");
+    expect(recent()).toContain('The live theme "Horizon" is Horizon 4.2.0, which matches the template.');
+    expect(recent()).toContain("v4.2.0 (recommended: matches the template and live theme, Sep 18, 2026)");
     await press(ENTER);
-    // The template has docs only for 4.2.0
-    await waitFor("There's no THEME.md for Horizon 4.1.5 yet, so the one for 4.2.0 is used");
     await waitFor("The storefront has a password");
     await press("123", ENTER);
     await waitFor("Save .mcp.json?");
     expect(recent()).toContain("so those are switched on");
     expect(all()).not.toContain("Also add the Shopify Dev MCP server?");
     expect(all()).not.toContain("Configure advanced settings?");
-    expect(all()).toContain("Horizon project: v4.1.5 into ./theme, docs for 4.2.0");
+    expect(all()).toContain("Horizon project: v4.2.0 into ./theme, docs for 4.2.0");
     expect(all()).toContain(`Advanced: live theme writes allowed; uploads from ${path.join(cwd, "uploads")}`);
     expect(downloadHorizon).not.toHaveBeenCalled();
     await press(ENTER);
@@ -427,20 +422,91 @@ describe("setup wizard: Horizon project", () => {
       advanced: { readOnly: false, allowLiveThemeWrites: true, uploadDir: path.join(cwd, "uploads"), disableRawGraphql: false },
     });
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(downloadHorizon.mock.invocationCallOrder[0]!);
-    expect(downloadHorizon).toHaveBeenCalledWith(HORIZON_VERSIONS[1]);
+    expect(downloadHorizon).toHaveBeenCalledWith(HORIZON_VERSIONS[0]);
     expect(writeProjectDocs).toHaveBeenCalledWith({
       docsVersion: "4.2.0",
       replaceThemeMd: false,
       details: {
         store: "mystore.myshopify.com",
         devStore: true,
-        liveTheme: { id: "gid://shopify/OnlineStoreTheme/111", version: "4.1.5" },
+        liveTheme: { id: "gid://shopify/OnlineStoreTheme/111", version: "4.2.0" },
         passwordProtected: true,
         storefrontPassword: "123",
       },
     });
-    expect(recent()).toContain(`Downloaded Horizon v4.1.5 into ${path.join(cwd, "theme")} (484 files)`);
+    expect(recent()).toContain(`Downloaded Horizon v4.2.0 into ${path.join(cwd, "theme")} (484 files)`);
     expect(recent()).toContain("Project docs for Horizon 4.2.0: CLAUDE.md created, THEME.md created, customizations.md created");
+  });
+
+  it("matches an older version the template also covers, and warns when another version is picked", async () => {
+    const verify = vi.fn<WizardOptions["verify"]>(async () => ({ ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.1.5" } }));
+    const wizard = setup({ verify, listDocsVersions: async () => ["4.2.0", "4.1.5"] });
+    const { outcome, recent, waitFor, press, downloadHorizon, writeProjectDocs } = wizard;
+
+    await toProject(wizard);
+    await press("y");
+    await waitFor("Which Horizon version?");
+    expect(recent()).toContain("Template: Horizon 4.2.0, 4.1.5 (acoderacom/claude-horizon)");
+    expect(recent()).toContain("is Horizon 4.1.5, which matches the template.");
+    expect(recent()).toContain("v4.1.5 (recommended: matches the template and live theme");
+    await press(UP, ENTER);
+    await waitFor("./theme will hold Horizon 4.2.0, but the live theme and THEME.md are Horizon 4.1.5.");
+    await waitFor("Save .mcp.json?");
+    await press(ENTER);
+
+    await expect(outcome).resolves.toBe("saved");
+    expect(downloadHorizon).toHaveBeenCalledWith(HORIZON_VERSIONS[0]);
+    expect(writeProjectDocs.mock.calls[0]![0]).toMatchObject({ docsVersion: "4.1.5" });
+  });
+
+  it.each([
+    [
+      "older than the template",
+      { ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.1.3" } },
+      'The live theme "Horizon" is Horizon 4.1.3, older than the template\'s Horizon 4.2.0. Upgrade it to Horizon 4.2.0 in the Shopify admin, then run setup again.',
+    ],
+    [
+      "newer than the template",
+      { ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.3.0" } },
+      "is Horizon 4.3.0, newer than the template's Horizon 4.2.0. Downgrade it to Horizon 4.2.0, or wait for the template to cover 4.3.0",
+    ],
+    [
+      "not Horizon",
+      { ...CONNECTED, liveTheme: { id: "gid://shopify/OnlineStoreTheme/9", name: "Dawn", themeName: "Dawn", version: "15.0.0" } },
+      'The live theme "Dawn" isn\'t Horizon. Publish Horizon 4.2.0 in the Shopify admin, then run setup again.',
+    ],
+    [
+      "unreadable",
+      { ...CONNECTED, liveTheme: undefined, liveThemeError: "Access denied for themes field" },
+      "Couldn't read the live theme (Access denied for themes field), so setup can't check it's the template's Horizon 4.2.0.",
+    ],
+  ] as const)("stops the whole setup when the live theme is %s", async (_case, result, notice) => {
+    const wizard = setup({ verify: async () => result });
+    const { outcome, recent, waitFor, press, save, downloadHorizon } = wizard;
+
+    await toProject(wizard);
+    await press("y");
+    await waitFor(notice);
+
+    await expect(outcome).resolves.toBe("stopped");
+    expect(recent()).toContain("Setup stopped. .mcp.json wasn't changed.");
+    expect(save).not.toHaveBeenCalled();
+    expect(downloadHorizon).not.toHaveBeenCalled();
+  });
+
+  it("stops the whole setup when GitHub can't list the template versions", async () => {
+    const wizard = setup({
+      listDocsVersions: async () => Promise.reject(new Error("GitHub's rate limit was reached, so try again in an hour")),
+    });
+    const { outcome, recent, waitFor, press, save } = wizard;
+
+    await toProject(wizard);
+    await press("y");
+    await waitFor("Couldn't get the template versions from acoderacom/claude-horizon: GitHub's rate limit was reached");
+
+    await expect(outcome).resolves.toBe("stopped");
+    expect(recent()).toContain("Setup stopped. .mcp.json wasn't changed.");
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("replaces theme files and THEME.md only when that's confirmed", async () => {
@@ -489,48 +555,6 @@ describe("setup wizard: Horizon project", () => {
     await expect(outcome).resolves.toBe("saved");
     expect(downloadHorizon).not.toHaveBeenCalled();
     expect(writeProjectDocs).not.toHaveBeenCalled();
-  });
-
-  it("warns when the live theme isn't Horizon, leaving its placeholders for Claude", async () => {
-    const verify = vi.fn<WizardOptions["verify"]>(async () => ({
-      ...CONNECTED,
-      liveTheme: { id: "gid://shopify/OnlineStoreTheme/9", name: "Dawn", themeName: "Dawn", version: "15.0.0" },
-    }));
-    const writeProjectDocs = vi.fn<WizardOptions["writeProjectDocs"]>(async () => ({ ...DOCS_CREATED, placeholdersLeft: true }));
-    const wizard = setup({ verify, writeProjectDocs });
-    const { outcome, recent, waitFor, press } = wizard;
-
-    await toProject(wizard);
-    await press("y");
-    await waitFor("Which Horizon version?");
-    expect(recent()).toContain('The live theme is "Dawn", not Horizon.');
-    await press(ENTER);
-    await waitFor("Save .mcp.json?");
-    await press(ENTER);
-
-    await expect(outcome).resolves.toBe("saved");
-    expect(writeProjectDocs.mock.calls[0]![0].details.liveTheme).toBeUndefined();
-    expect(recent()).toContain("CLAUDE.md still has [agent: …] placeholders. Ask Claude to fill them in.");
-  });
-
-  it("goes on without a project when GitHub can't list Horizon versions", async () => {
-    const wizard = setup({
-      listHorizonVersions: async () => Promise.reject(new Error("GitHub's rate limit was reached, so try again in an hour")),
-    });
-    const { outcome, waitFor, press, downloadHorizon } = wizard;
-
-    await toProject(wizard);
-    await press("y");
-    await waitFor("Couldn't get Horizon versions: GitHub's rate limit was reached");
-    await waitFor("Also add the Shopify Dev MCP server?");
-    await press("n");
-    await waitFor("Configure advanced settings?");
-    await press(ENTER);
-    await waitFor("Save .mcp.json?");
-    await press(ENTER);
-
-    await expect(outcome).resolves.toBe("saved");
-    expect(downloadHorizon).not.toHaveBeenCalled();
   });
 
   it("still writes the docs when the theme download fails, and reports it", async () => {

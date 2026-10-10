@@ -14,10 +14,11 @@ import {
 } from "./mcp-config.js";
 import { THEME_DIR, type DownloadResult, type HorizonVersion } from "./horizon.js";
 import type { NodeCheck } from "./node-version.js";
-import { docsVersionFor, type ProjectDetails, type ProjectDocsInput, type ProjectDocsResult } from "./template.js";
+import { TEMPLATE_REPO, checkLiveTheme, type ProjectDetails, type ProjectDocsInput, type ProjectDocsResult } from "./template.js";
 import type { StoreInfo, VerifyResult } from "./verify.js";
 
-export type SetupOutcome = "saved" | "cancelled" | "failed";
+/** "stopped" means setup ended without writing anything, because a Horizon project couldn't be set up. */
+export type SetupOutcome = "saved" | "cancelled" | "stopped" | "failed";
 
 export interface WizardOptions {
   cwd: string;
@@ -48,6 +49,8 @@ const AUTH_LABELS: Record<AuthAnswers["mode"], string> = {
 };
 
 class Cancelled extends Error {}
+// Ends setup without writing anything, after saying why
+class Stopped extends Error {}
 
 interface ProjectAnswer {
   horizon: HorizonVersion;
@@ -251,26 +254,8 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     };
   };
 
-  // Describes the live theme, which CLAUDE.md says Claude edits
-  const describeLiveTheme = (info: StoreInfo | undefined) => {
-    if (!info) return;
-    const live = info.liveTheme;
-    if (live?.themeName === "Horizon") {
-      p.log.info(`The live theme is Horizon ${live.version ?? "(version unknown)"}, "${live.name}".`, io);
-    } else if (live) {
-      p.log.warn(
-        `The live theme is "${live.name}", not Horizon. CLAUDE.md expects a live Horizon theme, so its live theme line is left for you to fill in.`,
-        io
-      );
-    } else {
-      p.log.warn(
-        `Couldn't read the live theme (${info.liveThemeError ?? "no reason given"}), so CLAUDE.md's live theme line is left for you to fill in. The app needs the read_themes scope.`,
-        io
-      );
-    }
-  };
-
-  // A Horizon project: the theme from Shopify, and CLAUDE.md, THEME.md and customizations.md from the template
+  // A Horizon project: the theme from Shopify, and CLAUDE.md, THEME.md and customizations.md from the
+  // template. The live theme must be a Horizon version the template covers, or setup stops.
   const askProject = async (info: StoreInfo | undefined): Promise<ProjectAnswer | undefined> => {
     const themeDir = path.join(cwd, THEME_DIR);
     const kind = pathKind(themeDir);
@@ -286,49 +271,88 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       })
     );
     if (!wanted) return undefined;
-    describeLiveTheme(info);
 
     const listing = p.spinner(io);
-    listing.start("Getting Horizon versions from GitHub");
-    const [themes, docs] = await Promise.allSettled([options.listHorizonVersions(), options.listDocsVersions()]);
+    listing.start("Checking the template and Horizon versions on GitHub");
+    const [docs, themes] = await Promise.allSettled([options.listDocsVersions(), options.listHorizonVersions()]);
+    const docsVersions = docs.status === "fulfilled" ? docs.value : [];
+    if (docsVersions.length === 0) {
+      const reason = docs.status === "rejected" ? errorMessage(docs.reason) : "it has no Horizon versions";
+      listing.error(`Couldn't get the template versions from ${TEMPLATE_REPO}: ${reason}. Run setup again to retry.`);
+      throw new Stopped();
+    }
     const versions = themes.status === "fulfilled" ? themes.value : [];
     if (versions.length === 0) {
       const reason = themes.status === "rejected" ? errorMessage(themes.reason) : "GitHub listed none";
       listing.error(`Couldn't get Horizon versions: ${reason}. Run setup again to retry.`);
-      return undefined;
+      throw new Stopped();
     }
-    listing.stop(`Found ${versions.length} Horizon versions`);
-    const docsVersions = docs.status === "fulfilled" ? docs.value : [];
-    if (docs.status === "rejected") p.log.warn(`Couldn't list the project docs: ${errorMessage(docs.reason)}`, io);
+    listing.stop(`Template: Horizon ${docsVersions.join(", ")} (${TEMPLATE_REPO})`);
 
-    const liveVersion = info?.liveTheme?.themeName === "Horizon" ? info.liveTheme.version : undefined;
+    const live = info?.liveTheme;
+    const check = checkLiveTheme(live, info ? (info.liveThemeError ?? "no reason given") : "the credentials check didn't pass", docsVersions);
+    const name = live ? ` "${live.name}"` : "";
+    switch (check.status) {
+      case "match":
+        p.log.success(`The live theme${name} is Horizon ${check.version}, which matches the template.`, io);
+        break;
+      case "older":
+        p.log.warn(
+          `The live theme${name} is Horizon ${check.version}, older than the template's Horizon ${check.templateVersion}. Upgrade it to Horizon ${check.templateVersion} in the Shopify admin, then run setup again.`,
+          io
+        );
+        throw new Stopped();
+      case "newer":
+        p.log.warn(
+          `The live theme${name} is Horizon ${check.version}, newer than the template's Horizon ${check.templateVersion}. Downgrade it to Horizon ${check.templateVersion}, or wait for the template to cover ${check.version}, then run setup again.`,
+          io
+        );
+        throw new Stopped();
+      case "not-horizon":
+        p.log.warn(
+          `The live theme${name} isn't Horizon. Publish Horizon ${check.templateVersion} in the Shopify admin, then run setup again.`,
+          io
+        );
+        throw new Stopped();
+      case "unknown":
+        p.log.warn(
+          `Couldn't read the live theme (${check.reason}), so setup can't check it's the template's Horizon ${check.templateVersion}. The app needs the read_themes scope; then run setup again.`,
+          io
+        );
+        throw new Stopped();
+    }
+
+    const recommended = versions.find((horizon) => horizon.version === check.version);
+    if (!recommended) {
+      p.log.warn(`Shopify/horizon has no release of Horizon ${check.version}, so setup can't download it.`, io);
+      throw new Stopped();
+    }
     const picked = await ask(
       p.select({
         ...io,
         message: "Which Horizon version?",
         maxItems: 8,
-        initialValue: versions.some((horizon) => horizon.version === liveVersion) ? liveVersion : versions[0]!.version,
+        initialValue: recommended.version,
         options: versions.map((horizon, i) => ({
           value: horizon.version,
           label: `v${horizon.version}`,
-          hint: [i === 0 ? "latest" : "", horizon.version === liveVersion ? "live theme" : "", releaseDate(horizon.date)]
+          hint: [
+            horizon === recommended ? "recommended: matches the template and live theme" : i === 0 ? "latest" : "",
+            releaseDate(horizon.date),
+          ]
             .filter(Boolean)
             .join(", "),
         })),
       })
     );
     const horizon = versions.find((candidate) => candidate.version === picked)!;
-    if (liveVersion && liveVersion !== horizon.version) {
-      p.log.warn(`The live theme is Horizon ${liveVersion}, so ./${THEME_DIR} won't match it.`, io);
-    }
-    // Without a docs listing, the version's own tag is tried
-    const docsVersion = docsVersionFor(horizon.version, docsVersions) ?? horizon.version;
-    if (docsVersion !== horizon.version) {
+    if (horizon !== recommended) {
       p.log.warn(
-        `There's no THEME.md for Horizon ${horizon.version} yet, so the one for ${docsVersion} is used. Claude checks what it relies on against the theme (THEME.md §0.1).`,
+        `./${THEME_DIR} will hold Horizon ${horizon.version}, but the live theme and THEME.md are Horizon ${recommended.version}.`,
         io
       );
     }
+    const docsVersion = recommended.version;
 
     const current = [
       kind === "folder" && readdirSync(themeDir).length > 0 ? `the files in ./${THEME_DIR}` : "",
@@ -548,6 +572,10 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     p.outro("Restart Claude Code in this folder (or run /mcp) to connect.", io);
     return complete ? "saved" : "failed";
   } catch (err) {
+    if (err instanceof Stopped) {
+      p.cancel(`Setup stopped. ${CONFIG_FILE} wasn't changed.`, io);
+      return "stopped";
+    }
     if (!(err instanceof Cancelled)) throw err;
     p.cancel(`Cancelled. ${CONFIG_FILE} wasn't changed.`, io);
     return "cancelled";

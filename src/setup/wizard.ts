@@ -13,7 +13,14 @@ import {
 } from "./mcp-config.js";
 import { THEME_DIR, type DownloadResult, type HorizonVersion } from "./horizon.js";
 import type { NodeCheck } from "./node-version.js";
-import { TEMPLATE_REPO, checkLiveTheme, type ProjectDetails, type ProjectDocsInput, type ProjectDocsResult } from "./template.js";
+import {
+  TEMPLATE_REPO,
+  checkLiveTheme,
+  type ProjectDetails,
+  type ProjectDocsInput,
+  type ProjectDocsResult,
+  type TemplateIndex,
+} from "./template.js";
 import type { StoreInfo, VerifyResult } from "./verify.js";
 
 /** "stopped" means setup ended without writing anything, because a Horizon project couldn't be set up. */
@@ -28,11 +35,12 @@ export interface WizardOptions {
   checkDevMcpNode: () => Promise<NodeCheck>;
   verify: (store: string, auth: AuthAnswers) => Promise<VerifyResult>;
   save: (answers: SetupAnswers) => Promise<SaveResult>;
-  listHorizonVersions: () => Promise<HorizonVersion[]>;
+  /** Reads the template's versions.json. */
+  loadTemplateIndex: () => Promise<TemplateIndex>;
   /** Downloads Horizon into the theme folder, replacing what's there. */
   downloadHorizon: (horizon: HorizonVersion) => Promise<DownloadResult>;
-  /** Lists the Horizon versions the project docs cover. */
-  listDocsVersions: () => Promise<string[]>;
+  /** Saves an upload-ready zip of a Horizon version in the folder and returns its path. */
+  saveHorizonZip: (horizon: HorizonVersion) => Promise<string>;
   writeProjectDocs: (input: ProjectDocsInput) => Promise<ProjectDocsResult>;
   /** Streams the prompts use instead of the terminal, for tests. */
   input?: Readable;
@@ -58,17 +66,9 @@ const MODE_LABELS: Record<Mode, string> = {
   theme: "Full theme design",
 };
 
-// What theme development downloads from, checked before the store questions
-interface ProjectSources {
-  /** Horizon versions the template has docs for, newest first. */
-  docsVersions: string[];
-  versions: HorizonVersion[];
-}
-
 interface ProjectAnswer {
+  /** The live theme's version, which ./theme and THEME.md get too. */
   horizon: HorizonVersion;
-  /** The Horizon version whose docs are used. */
-  docsVersion: string;
   /** Whether the theme folder has files or THEME.md exists, which the project replaces. */
   replace: boolean;
   storefrontPassword?: string;
@@ -82,12 +82,6 @@ function pathKind(target: string): "folder" | "file" | "missing" {
   } catch {
     return "missing";
   }
-}
-
-function releaseDate(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
 function describeNode(check: NodeCheck, nodeVersion: string): string {
@@ -175,100 +169,77 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     return { mode, clientId: clientId.trim(), clientSecret: await askSecret("Client secret", known) };
   };
 
-  // Theme development: the theme from Shopify, and CLAUDE.md, THEME.md and customizations.md from the
-  // template. Its sources are checked first, so a problem shows before any store questions.
-  const checkSources = async (): Promise<ProjectSources> => {
+  // Theme design: the theme from Shopify, and CLAUDE.md, THEME.md and customizations.md from the
+  // template. Its versions.json is read first, so a problem shows before any store questions.
+  const checkTemplate = async (): Promise<TemplateIndex> => {
     const themeDir = path.join(cwd, THEME_DIR);
     if (pathKind(themeDir) === "file") {
       p.log.warn(`${themeDir} is a file, so setup can't put the Horizon theme there. Move it, then run setup again.`, io);
       throw new Stopped();
     }
-    const listing = p.spinner(io);
-    listing.start("Checking the template and Horizon versions on GitHub");
-    const [docs, themes] = await Promise.allSettled([options.listDocsVersions(), options.listHorizonVersions()]);
-    const docsVersions = docs.status === "fulfilled" ? docs.value : [];
-    if (docsVersions.length === 0) {
-      const reason = docs.status === "rejected" ? errorMessage(docs.reason) : "it has no Horizon versions";
-      listing.error(`Couldn't get the template versions from ${TEMPLATE_REPO}: ${reason}. Run setup again to retry.`);
+    const reading = p.spinner(io);
+    reading.start("Checking the template on GitHub");
+    let index: TemplateIndex;
+    try {
+      index = await options.loadTemplateIndex();
+    } catch (err) {
+      reading.error(`Couldn't read the template's versions from ${TEMPLATE_REPO}: ${errorMessage(err)}. Run setup again to retry.`);
       throw new Stopped();
     }
-    const versions = themes.status === "fulfilled" ? themes.value : [];
-    if (versions.length === 0) {
-      const reason = themes.status === "rejected" ? errorMessage(themes.reason) : "GitHub listed none";
-      listing.error(`Couldn't get Horizon versions: ${reason}. Run setup again to retry.`);
-      throw new Stopped();
-    }
-    listing.stop(`Template: Horizon ${docsVersions.join(", ")} (${TEMPLATE_REPO})`);
-    return { docsVersions, versions };
+    const versions =
+      index.supported.length === 1
+        ? index.current.version
+        : index.supported.map(({ version }) => (version === index.current.version ? `${version} (current)` : version)).join(", ");
+    reading.stop(`Template: Horizon ${versions} (${TEMPLATE_REPO})`);
+    return index;
   };
 
-  // After the credentials check. The live theme must be a Horizon version the template covers, or setup stops.
-  const askProject = async (info: StoreInfo | undefined, { docsVersions, versions }: ProjectSources): Promise<ProjectAnswer> => {
+  // The Shopify theme store only installs the newest Horizon, so a store gets a specific version by uploading it
+  const offerZip = async (horizon: HorizonVersion) => {
+    p.log.info(
+      `The Shopify theme store only installs the newest Horizon. To put Horizon ${horizon.version} on the store, upload it in the Shopify admin (Online Store → Themes → Add theme → Upload zip file) and publish it.`,
+      io
+    );
+    const wanted = await ask(
+      p.confirm({ ...io, message: `Save horizon-${horizon.version}.zip in this folder to upload?`, initialValue: true })
+    );
+    if (!wanted) return;
+    const saving = p.spinner(io);
+    saving.start(`Downloading Horizon ${horizon.version}`);
+    try {
+      saving.stop(`Saved ${await options.saveHorizonZip(horizon)}`);
+    } catch (err) {
+      saving.error(`Couldn't save the zip: ${errorMessage(err)}`);
+    }
+  };
+
+  // After the credentials check. The live theme must be a supported Horizon version, or setup stops.
+  const askProject = async (info: StoreInfo | undefined, index: TemplateIndex): Promise<ProjectAnswer> => {
     const themeDir = path.join(cwd, THEME_DIR);
     const live = info?.liveTheme;
-    const check = checkLiveTheme(live, info ? (info.liveThemeError ?? "no reason given") : "the credentials check didn't pass", docsVersions);
+    const check = checkLiveTheme(live, info ? (info.liveThemeError ?? "no reason given") : "the credentials check didn't pass", index);
     const name = live ? ` "${live.name}"` : "";
-    switch (check.status) {
-      case "match":
-        p.log.success(`The live theme${name} is Horizon ${check.version}, which matches the template.`, io);
-        break;
-      case "older":
-        p.log.warn(
-          `The live theme${name} is Horizon ${check.version}, older than the template's Horizon ${check.templateVersion}. Upgrade it to Horizon ${check.templateVersion} in the Shopify admin, then run setup again.`,
-          io
-        );
-        throw new Stopped();
-      case "newer":
-        p.log.warn(
-          `The live theme${name} is Horizon ${check.version}, newer than the template's Horizon ${check.templateVersion}. Downgrade it to Horizon ${check.templateVersion}, or wait for the template to cover ${check.version}, then run setup again.`,
-          io
-        );
-        throw new Stopped();
-      case "not-horizon":
-        p.log.warn(
-          `The live theme${name} isn't Horizon. Publish Horizon ${check.templateVersion} in the Shopify admin, then run setup again.`,
-          io
-        );
-        throw new Stopped();
-      case "unknown":
-        p.log.warn(
-          `Couldn't read the live theme (${check.reason}), so setup can't check it's the template's Horizon ${check.templateVersion}. The app needs the read_themes scope; then run setup again.`,
-          io
-        );
-        throw new Stopped();
-    }
-
-    const recommended = versions.find((horizon) => horizon.version === check.version);
-    if (!recommended) {
-      p.log.warn(`Shopify/horizon has no release of Horizon ${check.version}, so setup can't download it.`, io);
-      throw new Stopped();
-    }
-    const picked = await ask(
-      p.select({
-        ...io,
-        message: "Which Horizon version?",
-        maxItems: 8,
-        initialValue: recommended.version,
-        options: versions.map((horizon, i) => ({
-          value: horizon.version,
-          label: `v${horizon.version}`,
-          hint: [
-            horizon === recommended ? "recommended: matches the template and live theme" : i === 0 ? "latest" : "",
-            releaseDate(horizon.date),
-          ]
-            .filter(Boolean)
-            .join(", "),
-        })),
-      })
-    );
-    const horizon = versions.find((candidate) => candidate.version === picked)!;
-    if (horizon !== recommended) {
+    if (check.status === "unknown") {
       p.log.warn(
-        `./${THEME_DIR} will hold Horizon ${horizon.version}, but the live theme and THEME.md are Horizon ${recommended.version}.`,
+        `Couldn't read the live theme (${check.reason}), so setup can't check it's a Horizon version the template supports. The app needs the read_themes scope; then run setup again.`,
         io
       );
+      throw new Stopped();
     }
-    const docsVersion = recommended.version;
+    if (check.status !== "match") {
+      const target = check.current.version;
+      const notice =
+        check.status === "not-horizon"
+          ? `The live theme${name} isn't Horizon. Switch the store to Horizon ${target}, then run setup again.`
+          : check.status === "older"
+            ? `The live theme${name} is Horizon ${check.version}, older than the template's Horizon ${target}. Switch the store to Horizon ${target}, then run setup again.`
+            : `The live theme${name} is Horizon ${check.version}, newer than the template's Horizon ${target}. Switch the store to Horizon ${target}, or wait until the template supports ${check.version}, then run setup again.`;
+      p.log.warn(notice, io);
+      await offerZip(check.current);
+      throw new Stopped();
+    }
+    const horizon = check.horizon;
+    p.log.success(`The live theme${name} is Horizon ${horizon.version}, which matches the template.`, io);
 
     const current = [
       pathKind(themeDir) === "folder" && readdirSync(themeDir).length > 0 ? `the files in ./${THEME_DIR}` : "",
@@ -280,7 +251,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       !(await ask(
         p.confirm({
           ...io,
-          message: `Replace ${current.join(" and ")} with Horizon v${horizon.version}? Changes made there will be lost.`,
+          message: `Replace ${current.join(" and ")} with Horizon ${horizon.version}? Changes made there will be lost.`,
           initialValue: false,
         })
       ))
@@ -300,7 +271,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       );
       storefrontPassword = (entered ?? "").trim() || undefined;
     }
-    return { horizon, docsVersion, replace, storefrontPassword };
+    return { horizon, replace, storefrontPassword };
   };
 
   try {
@@ -335,7 +306,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         ],
       })
     );
-    const sources = mode === "theme" ? await checkSources() : undefined;
+    const index = mode === "theme" ? await checkTemplate() : undefined;
 
     let store = await askStore(existing.store ?? "");
     let auth = await askAuth(undefined);
@@ -369,7 +340,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       auth = await askAuth(auth);
     }
 
-    const project = sources ? await askProject(info, sources) : undefined;
+    const project = index ? await askProject(info, index) : undefined;
 
     let includeDevMcp: boolean;
     let advanced: AdvancedAnswers | undefined;
@@ -420,7 +391,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         `Settings: ${describeAdvanced(advanced ?? { ...existing.advanced, allowLiveThemeWrites: false })}`,
         ...(project
           ? [
-              `Horizon project: v${project.horizon.version} into ./${THEME_DIR}, docs for ${project.docsVersion}${project.replace ? ", replacing current files" : ""}`,
+              `Horizon project: Horizon ${project.horizon.version} in ./${THEME_DIR}, with its THEME.md${project.replace ? ", replacing current files" : ""}`,
             ]
           : []),
       ].join("\n"),
@@ -462,10 +433,10 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     let complete = true;
     if (project) {
       const downloading = p.spinner(io);
-      downloading.start(`Downloading Horizon v${project.horizon.version}`);
+      downloading.start(`Downloading Horizon ${project.horizon.version}`);
       try {
         const download = await options.downloadHorizon(project.horizon);
-        downloading.stop(`Downloaded Horizon v${project.horizon.version} into ${download.dir} (${download.files} files)`);
+        downloading.stop(`Downloaded Horizon ${project.horizon.version} into ${download.dir} (${download.files} files)`);
       } catch (err) {
         complete = false;
         downloading.error(`Couldn't download Horizon: ${errorMessage(err)}`);
@@ -474,6 +445,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       const live = info?.liveTheme;
       const details: ProjectDetails = {
         store,
+        horizonVersion: project.horizon.version,
         devStore: info?.devStore,
         liveTheme: live?.themeName === "Horizon" ? { id: live.id, version: live.version } : undefined,
         passwordProtected: info?.passwordProtected,
@@ -482,13 +454,9 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       const writing = p.spinner(io);
       writing.start("Writing CLAUDE.md, THEME.md and customizations.md");
       try {
-        const docs = await options.writeProjectDocs({
-          docsVersion: project.docsVersion,
-          replaceThemeMd: project.replace,
-          details,
-        });
+        const docs = await options.writeProjectDocs({ replaceThemeMd: project.replace, details });
         writing.stop(
-          `Project docs for Horizon ${project.docsVersion}: ${docs.files.map((doc) => `${doc.name} ${doc.action}`).join(", ")}`
+          `Project docs for Horizon ${project.horizon.version}: ${docs.files.map((doc) => `${doc.name} ${doc.action}`).join(", ")}`
         );
         if (docs.placeholdersLeft) {
           p.log.warn("CLAUDE.md still has [agent: …] placeholders. Ask Claude to fill them in.", io);

@@ -1,44 +1,22 @@
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import semver from "semver";
-import { fetchArchive, githubApi } from "./github.js";
+import { fetchArchive } from "./github.js";
+import { createZip } from "./zip.js";
 
 const REPO = "Shopify/horizon";
 
 /** The folder in the project that Horizon is downloaded into. */
 export const THEME_DIR = "theme";
 
+/** A Horizon version and the Shopify/horizon commit that holds it. */
 export interface HorizonVersion {
   version: string;
-  /** The commit that released this version. */
   sha: string;
-  /** When it was released, as an ISO timestamp. */
-  date: string;
 }
 
 export interface DownloadResult {
   dir: string;
   files: number;
-}
-
-interface Commit {
-  sha: string;
-  commit: { message: string; committer: { date: string } };
-}
-
-/**
- * Lists Horizon's versions, newest first. Horizon has no GitHub releases or tags: Shopify publishes
- * each version as a commit titled "Horizon vX.Y.Z" that bumps config/settings_schema.json.
- */
-export async function listHorizonVersions(): Promise<HorizonVersion[]> {
-  const commits = await githubApi<Commit[]>(`repos/${REPO}/commits?path=config/settings_schema.json&per_page=100`);
-  const versions = new Map<string, HorizonVersion>();
-  for (const { sha, commit } of commits) {
-    const version = /^Horizon v(\d+\.\d+\.\d+)\s*$/.exec(commit.message.split("\n")[0]!)?.[1];
-    // Commits come newest first, so a version released twice keeps its latest commit
-    if (version && !versions.has(version)) versions.set(version, { version, sha, date: commit.committer.date });
-  }
-  return [...versions.values()].sort((a, b) => semver.rcompare(a.version, b.version));
 }
 
 /**
@@ -64,4 +42,21 @@ export async function downloadHorizon(dir: string, horizon: HorizonVersion): Pro
     await rm(staging, { recursive: true, force: true });
     throw err;
   }
+}
+
+/**
+ * Saves a Horizon version as <dir>/horizon-<version>.zip with the theme folders at the top level,
+ * ready for Online Store → Themes → Add theme → Upload zip file. The Shopify theme store only
+ * installs the newest Horizon, so this is how a store gets a specific version.
+ */
+export async function saveHorizonZip(dir: string, horizon: HorizonVersion): Promise<string> {
+  const files = await fetchArchive(REPO, horizon.sha);
+  if (!files.some((file) => file.path === "layout/theme.liquid")) {
+    throw new Error("The download has no layout/theme.liquid, so it isn't a theme");
+  }
+  const target = path.join(dir, `horizon-${horizon.version}.zip`);
+  const staging = `${target}.part`;
+  await writeFile(staging, createZip(files));
+  await rename(staging, target);
+  return target;
 }

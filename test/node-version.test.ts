@@ -9,7 +9,7 @@ afterEach(() => {
 
 describe("checkAdminNode", () => {
   it("uses this package's engines requirement", () => {
-    expect(checkAdminNode("22.12.0")).toEqual({ label: "shopify-admin-mcp", range: ">=22.12.0", ok: true });
+    expect(checkAdminNode("22.12.0")).toEqual({ label: "Shopify Admin MCP", range: ">=22.12.0", ok: true });
     expect(checkAdminNode("20.19.0").ok).toBe(false);
   });
 });

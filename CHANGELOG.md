@@ -1,5 +1,17 @@
 # @acodera/shopify-admin-mcp
 
+## 1.5.0
+
+### Minor Changes
+
+- [#22](https://github.com/acoderacom/shopify-admin-mcp/pull/22) [`93efebc`](https://github.com/acoderacom/shopify-admin-mcp/commit/93efebc446107b2bcade9918a6e0e06689d1a7c0) Thanks [@acoderacom](https://github.com/acoderacom)! - New `--disable-theme-writes` option (`SHOPIFY_DISABLE_THEME_WRITES`) refuses every theme change: the theme write tools are left out, and raw GraphQL refuses all theme mutations, whichever theme they target. It overrides `--allow-live-theme-writes`.
+
+- [#22](https://github.com/acoderacom/shopify-admin-mcp/pull/22) [`fd6d1c1`](https://github.com/acoderacom/shopify-admin-mcp/commit/fd6d1c16f290f25c43ecffe930c12800ed7c7995) Thanks [@acoderacom](https://github.com/acoderacom)! - Setup now asks right after the Node.js check whether to connect to a store only or set up full theme design. Connecting to a store only turns theme edits off. Full theme design checks the template and Horizon versions on GitHub before any store questions, then checks the store's live theme against the template: a match is confirmed and recommended in the version menu, and a live theme that's older, newer, not Horizon or unreadable gets an upgrade or downgrade notice and stops setup without writing anything.
+
+### Patch Changes
+
+- [#21](https://github.com/acoderacom/shopify-admin-mcp/pull/21) [`3fa6ece`](https://github.com/acoderacom/shopify-admin-mcp/commit/3fa6ecee2e128c4de6da9234abdcc6f918ab4bb5) Thanks [@acoderacom](https://github.com/acoderacom)! - Setup's authentication choices read "Access token (legacy custom app)" and "Client ID and secret (dev dashboard app)", without the token prefix.
+
 ## 1.4.0
 
 ### Minor Changes

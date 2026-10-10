@@ -1,7 +1,7 @@
 import { gunzipSync } from "node:zlib";
 import { PACKAGE_NAME } from "./mcp-config.js";
 
-/** Fetches from GitHub without a login, explaining its rate limit when it's hit. */
+/** Fetches from GitHub without a login, explaining its API rate limit when it's hit. */
 export async function githubFetch(url: string, timeoutMs: number, headers: Record<string, string> = {}): Promise<Response> {
   const res = await fetch(url, { headers: { "user-agent": PACKAGE_NAME, ...headers }, signal: AbortSignal.timeout(timeoutMs) });
   if (res.ok) return res;
@@ -12,10 +12,10 @@ export async function githubFetch(url: string, timeoutMs: number, headers: Recor
   throw new Error(`GitHub returned ${res.status}`);
 }
 
-/** Calls the GitHub REST API. */
-export async function githubApi<T>(path: string): Promise<T> {
-  const res = await githubFetch(`https://api.github.com/${path}`, 10_000, { accept: "application/vnd.github+json" });
-  return (await res.json()) as T;
+/** Reads a file from a repository at a branch, tag or commit. Raw files don't count toward the API rate limit. */
+export async function githubRaw(repo: string, ref: string, file: string): Promise<string> {
+  const res = await githubFetch(`https://raw.githubusercontent.com/${repo}/${ref}/${file}`, 30_000);
+  return res.text();
 }
 
 export interface TarFile {

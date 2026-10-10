@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { readTar } from "../src/setup/github.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { githubRaw, readTar } from "../src/setup/github.js";
 import { entry, paxPath, tar } from "./tar-helpers.js";
 
 describe("readTar", () => {
@@ -31,5 +31,30 @@ describe("readTar", () => {
 
     expect(() => readTar(damaged)).toThrow("The archive is damaged");
     expect(() => readTar(archive.subarray(0, 700))).toThrow("The archive ended early");
+  });
+});
+
+describe("githubRaw", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reads a file from raw.githubusercontent.com", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(githubRaw("acoderacom/claude-horizon", "main", "versions.json")).resolves.toBe("{}");
+    expect(String(fetchMock.mock.calls[0]![0])).toBe("https://raw.githubusercontent.com/acoderacom/claude-horizon/main/versions.json");
+  });
+
+  it("explains GitHub's rate limit and other failures", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () => new Response("", { status: 403, headers: { "x-ratelimit-remaining": "0" } }))
+    );
+    await expect(githubRaw("o/r", "main", "f")).rejects.toThrow("GitHub's rate limit was reached");
+
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => new Response("", { status: 404 })));
+    await expect(githubRaw("o/r", "main", "f")).rejects.toThrow("GitHub returned 404");
   });
 });

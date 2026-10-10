@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { Readable, Writable } from "node:stream";
@@ -12,6 +12,7 @@ import {
   type SaveResult,
   type SetupAnswers,
 } from "./mcp-config.js";
+import { THEME_DIR, type DownloadResult, type HorizonVersion } from "./horizon.js";
 import type { NodeCheck } from "./node-version.js";
 import type { VerifyResult } from "./verify.js";
 
@@ -26,6 +27,9 @@ export interface WizardOptions {
   checkDevMcpNode: () => Promise<NodeCheck>;
   verify: (store: string, auth: AuthAnswers) => Promise<VerifyResult>;
   save: (answers: SetupAnswers) => Promise<SaveResult>;
+  listHorizonVersions: () => Promise<HorizonVersion[]>;
+  /** Downloads Horizon into the theme folder, replacing what's there. */
+  downloadHorizon: (horizon: HorizonVersion) => Promise<DownloadResult>;
   /** Streams the prompts use instead of the terminal, for tests. */
   input?: Readable;
   output?: Writable;
@@ -41,6 +45,14 @@ const AUTH_LABELS: Record<AuthAnswers["mode"], string> = {
 
 class Cancelled extends Error {}
 
+interface HorizonAnswer {
+  horizon: HorizonVersion;
+  /** Whether the theme folder already has files that the download replaces. */
+  replace: boolean;
+}
+
+const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
 function resolveFolder(cwd: string, input: string): string {
   const expanded = input === "~" || input.startsWith("~/") ? path.join(homedir(), input.slice(1)) : input;
   return path.resolve(cwd, expanded);
@@ -52,6 +64,12 @@ function pathKind(target: string): "folder" | "file" | "missing" {
   } catch {
     return "missing";
   }
+}
+
+function releaseDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
 function describeNode(check: NodeCheck, nodeVersion: string): string {
@@ -226,6 +244,60 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     };
   };
 
+  const askHorizon = async (): Promise<HorizonAnswer | undefined> => {
+    const themeDir = path.join(cwd, THEME_DIR);
+    const kind = pathKind(themeDir);
+    if (kind === "file") {
+      p.log.warn(`${themeDir} is a file, so setup can't download the Horizon theme there.`, io);
+      return undefined;
+    }
+    const wanted = await ask(
+      p.confirm({ ...io, message: `Download Shopify's Horizon theme into ./${THEME_DIR}?`, initialValue: false })
+    );
+    if (!wanted) return undefined;
+
+    const listing = p.spinner(io);
+    listing.start("Getting Horizon versions from GitHub");
+    let versions: HorizonVersion[];
+    try {
+      versions = await options.listHorizonVersions();
+      if (versions.length === 0) throw new Error("GitHub listed none");
+    } catch (err) {
+      listing.error(`Couldn't get Horizon versions: ${errorMessage(err)}. Run setup again to retry.`);
+      return undefined;
+    }
+    listing.stop(`Found ${versions.length} Horizon versions`);
+
+    const picked = await ask(
+      p.select({
+        ...io,
+        message: "Which Horizon version?",
+        maxItems: 8,
+        options: versions.map((horizon, i) => ({
+          value: horizon.version,
+          label: `v${horizon.version}`,
+          hint: [i === 0 ? "latest" : "", releaseDate(horizon.date)].filter(Boolean).join(", "),
+        })),
+      })
+    );
+    const horizon = versions.find((candidate) => candidate.version === picked)!;
+
+    const replace = kind === "folder" && readdirSync(themeDir).length > 0;
+    if (
+      replace &&
+      !(await ask(
+        p.confirm({
+          ...io,
+          message: `./${THEME_DIR} already has files. Replace them with Horizon v${horizon.version}? Changes made there will be lost.`,
+          initialValue: false,
+        })
+      ))
+    ) {
+      return undefined;
+    }
+    return { horizon, replace };
+  };
+
   try {
     p.intro("Shopify Admin MCP setup", io);
     p.log.info(
@@ -255,6 +327,8 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         initialValue: existing.hasDevMcp || (!existing.hasFile && devMcpNode.ok),
       })
     );
+
+    const theme = await askHorizon();
 
     const advanced = (await ask(
       p.confirm({
@@ -302,6 +376,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         `Store: ${store}`,
         `Authentication: ${AUTH_LABELS[auth.mode]}`,
         `Shopify Dev MCP: ${devMcpChange}`,
+        `Horizon theme: ${theme ? `v${theme.horizon.version} into ./${THEME_DIR}${theme.replace ? ", replacing its files" : ""}` : "not downloaded"}`,
         `Advanced: ${advanced ? describeAdvanced(advanced) : existing.hasServer ? "unchanged" : "defaults"}`,
       ].join("\n"),
       "Summary",
@@ -321,7 +396,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     try {
       result = await save({ store, auth, includeDevMcp, advanced });
     } catch (err) {
-      saving.error(`Couldn't save ${CONFIG_FILE}: ${err instanceof Error ? err.message : String(err)}`);
+      saving.error(`Couldn't save ${CONFIG_FILE}: ${errorMessage(err)}`);
       return "failed";
     }
     saving.stop(`Saved ${result.path}`);
@@ -338,8 +413,22 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         io
       );
     }
+
+    let downloaded = true;
+    if (theme) {
+      const downloading = p.spinner(io);
+      downloading.start(`Downloading Horizon v${theme.horizon.version}`);
+      try {
+        const result = await options.downloadHorizon(theme.horizon);
+        downloading.stop(`Downloaded Horizon v${theme.horizon.version} into ${result.dir} (${result.files} files)`);
+      } catch (err) {
+        downloaded = false;
+        downloading.error(`Couldn't download Horizon: ${errorMessage(err)}`);
+        p.log.warn(`${CONFIG_FILE} is saved. Run setup again to retry the download.`, io);
+      }
+    }
     p.outro("Restart Claude Code in this folder (or run /mcp) to connect.", io);
-    return "saved";
+    return downloaded ? "saved" : "failed";
   } catch (err) {
     if (!(err instanceof Cancelled)) throw err;
     p.cancel(`Cancelled. ${CONFIG_FILE} wasn't changed.`, io);

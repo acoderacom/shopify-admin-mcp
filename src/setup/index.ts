@@ -1,3 +1,4 @@
+import { downloadHorizon, listHorizonVersions } from "./horizon.js";
 import { describeExisting, readMcpConfig, saveSetup, type ExistingSetup } from "./mcp-config.js";
 import { checkAdminNode, checkDevMcpNode } from "./node-version.js";
 import { verifyCredentials } from "./verify.js";
@@ -35,6 +36,8 @@ export async function runSetup(cwd: string): Promise<number> {
     checkDevMcpNode: () => checkDevMcpNode(),
     verify: verifyCredentials,
     save: (answers) => saveSetup(cwd, answers),
+    listHorizonVersions,
+    downloadHorizon: (horizon) => downloadHorizon(cwd, horizon),
   });
   return outcome === "saved" ? 0 : 1;
 }

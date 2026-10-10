@@ -12,7 +12,7 @@ const ENTER = "\r";
 const DOWN = "\u001B[B";
 const ANSI = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 
-const ADMIN_NODE: NodeCheck = { label: "shopify-admin-mcp", range: ">=22.12.0", ok: true };
+const ADMIN_NODE: NodeCheck = { label: "Shopify Admin MCP", range: ">=22.12.0", ok: true };
 const DEV_NODE: NodeCheck = { label: "Shopify Dev MCP", range: ">=22.12.0", ok: true };
 
 let cwd: string;
@@ -112,7 +112,7 @@ describe("setup wizard", () => {
     await waitFor("Store domain");
 
     expect(all()).toContain("Node.js v24.15.0");
-    expect(all()).toContain("shopify-admin-mcp needs Node.js >=22.12.0");
+    expect(all()).toContain("Shopify Admin MCP needs Node.js >=22.12.0");
     expect(all()).toContain("Shopify Dev MCP needs Node.js >=22.12.0");
   });
 

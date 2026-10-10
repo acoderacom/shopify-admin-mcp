@@ -8,7 +8,7 @@ export async function runSetup(cwd: string): Promise<number> {
   const adminNode = checkAdminNode();
   if (!adminNode.ok) {
     console.error(
-      `shopify-admin-mcp needs Node.js ${adminNode.range}, but this is ${process.version}. Install a newer Node.js from https://nodejs.org and run setup again.`
+      `Shopify Admin MCP needs Node.js ${adminNode.range}, but this is ${process.version}. Install a newer Node.js from https://nodejs.org and run setup again.`
     );
     return 1;
   }

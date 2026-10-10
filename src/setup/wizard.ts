@@ -1,9 +1,8 @@
 import { readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import type { Readable, Writable } from "node:stream";
 import * as p from "@clack/prompts";
-import { TOOLSETS, isValidStore, normalizeStore, type Toolset } from "../utils/cli.js";
+import { isValidStore, normalizeStore } from "../utils/cli.js";
 import {
   CONFIG_FILE,
   type AdvancedAnswers,
@@ -40,7 +39,7 @@ export interface WizardOptions {
   output?: Writable;
 }
 
-// The folder the "create an uploads folder" option points at
+// The folder theme design lets local uploads come from, as CLAUDE.md describes
 const UPLOADS_FOLDER = "uploads";
 
 const AUTH_LABELS: Record<AuthAnswers["mode"], string> = {
@@ -76,11 +75,6 @@ interface ProjectAnswer {
 }
 
 const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
-
-function resolveFolder(cwd: string, input: string): string {
-  const expanded = input === "~" || input.startsWith("~/") ? path.join(homedir(), input.slice(1)) : input;
-  return path.resolve(cwd, expanded);
-}
 
 function pathKind(target: string): "folder" | "file" | "missing" {
   try {
@@ -179,83 +173,6 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     );
     const known = current?.mode === "client-credentials" ? current.clientSecret : (existing.clientSecret ?? "");
     return { mode, clientId: clientId.trim(), clientSecret: await askSecret("Client secret", known) };
-  };
-
-  const askUploadDir = async (current: string | undefined): Promise<string | undefined> => {
-    const uploads = resolveFolder(cwd, UPLOADS_FOLDER);
-    const choices: Array<{ value: string; label: string; hint?: string }> = [];
-    if (current) choices.push({ value: "keep", label: `Keep ${current}`, hint: "current" });
-    if (current !== uploads) {
-      choices.push(
-        pathKind(uploads) === "folder"
-          ? { value: "uploads", label: `Use ${uploads}` }
-          : { value: "uploads", label: "Create an uploads folder here", hint: `${uploads}, created when you save` }
-      );
-    }
-    choices.push({ value: "custom", label: "Choose another folder" }, { value: "off", label: "Keep local uploads off" });
-
-    const choice = await ask(p.select({ ...io, message: "Local file uploads", options: choices }));
-    if (choice === "keep") return current;
-    if (choice === "uploads") return uploads;
-    if (choice === "off") return undefined;
-
-    let suggestion = current ?? "";
-    for (;;) {
-      const entered = await ask(
-        p.text({
-          ...io,
-          message: "Folder the assistant may upload local files from (relative paths start here)",
-          placeholder: "e.g. ./uploads or ~/shopify-uploads",
-          initialValue: suggestion,
-          validate: (value) => {
-            if (!value?.trim()) return "Enter a folder";
-            if (pathKind(resolveFolder(cwd, value.trim())) === "file") return "That's a file, not a folder";
-            return undefined;
-          },
-        })
-      );
-      const folder = resolveFolder(cwd, entered.trim());
-      if (pathKind(folder) === "folder") return folder;
-      const create = await ask(
-        p.confirm({ ...io, message: `${folder} doesn't exist yet. Create it when saving?`, initialValue: true })
-      );
-      if (create) return folder;
-      suggestion = entered;
-    }
-  };
-
-  const askAdvanced = async (draft: AdvancedAnswers): Promise<AdvancedAnswers> => {
-    const readOnly = await ask(
-      p.confirm({ ...io, message: "Read-only mode? Only tools that read store data are available.", initialValue: draft.readOnly })
-    );
-    // Write tools are hidden in read-only mode, so the upload folder doesn't apply. Theme edits are
-    // off in this mode, so there's no live theme setting to ask about.
-    const uploadDir = readOnly ? draft.uploadDir : await askUploadDir(draft.uploadDir);
-    const picked = await ask(
-      p.multiselect<Toolset>({
-        ...io,
-        message: "Toolsets to register",
-        options: TOOLSETS.map((name) => ({ value: name, label: name })),
-        initialValues: draft.toolsets ?? [...TOOLSETS],
-        maxItems: TOOLSETS.length,
-        required: true,
-      })
-    );
-    const toolsets = TOOLSETS.filter((name) => picked.includes(name));
-    const disableRawGraphql = await ask(
-      p.confirm({
-        ...io,
-        message: "Turn off raw GraphQL (shopify_graphql)? Then only the selected toolsets can reach the store.",
-        initialValue: draft.disableRawGraphql,
-      })
-    );
-    return {
-      readOnly,
-      allowLiveThemeWrites: false,
-      uploadDir,
-      toolsets: toolsets.length === TOOLSETS.length ? undefined : toolsets,
-      disableRawGraphql,
-    };
   };
 
   // Theme development: the theme from Shopify, and CLAUDE.md, THEME.md and customizations.md from the
@@ -462,7 +379,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       advanced = {
         readOnly: false,
         allowLiveThemeWrites: true,
-        uploadDir: resolveFolder(cwd, UPLOADS_FOLDER),
+        uploadDir: path.join(cwd, UPLOADS_FOLDER),
         toolsets: undefined,
         disableRawGraphql: false,
       };
@@ -485,15 +402,6 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
           initialValue: existing.hasDevMcp || (!existing.hasFile && devMcpNode.ok),
         })
       );
-      advanced = (await ask(
-        p.confirm({
-          ...io,
-          message: "Configure advanced settings? (read-only, upload folder, toolsets, raw GraphQL)",
-          initialValue: false,
-        })
-      ))
-        ? await askAdvanced(existing.advanced)
-        : undefined;
     }
 
     const devMcpChange = includeDevMcp
@@ -508,7 +416,8 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         `Authentication: ${AUTH_LABELS[auth.mode]}`,
         `Shopify Dev MCP: ${devMcpChange}`,
         `Theme edits: ${mode === "connect" ? "off" : "on, including the live theme"}`,
-        `Advanced: ${advanced ? describeAdvanced(advanced) : existing.hasServer ? "unchanged" : "defaults"}`,
+        // Connecting to a store only keeps other settings already in the file, minus live theme writes
+        `Settings: ${describeAdvanced(advanced ?? { ...existing.advanced, allowLiveThemeWrites: false })}`,
         ...(project
           ? [
               `Horizon project: v${project.horizon.version} into ./${THEME_DIR}, docs for ${project.docsVersion}${project.replace ? ", replacing current files" : ""}`,

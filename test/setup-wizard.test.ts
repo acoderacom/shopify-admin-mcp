@@ -130,12 +130,10 @@ async function toConnect({ waitFor, press }: Wizard, token = "shpat_x") {
   await waitFor("Also add the Shopify Dev MCP server?");
 }
 
-// Then no Shopify Dev MCP and no advanced settings: the shortest path to the summary
+// Then no Shopify Dev MCP: the shortest path to the summary
 async function quickPath(wizard: Wizard, token = "shpat_x") {
   await toConnect(wizard, token);
   await wizard.press("n");
-  await wizard.waitFor("Configure advanced settings?");
-  await wizard.press(ENTER);
 }
 
 // Full theme development (already the default in a folder with a theme), then the store and access token
@@ -175,8 +173,6 @@ describe("setup wizard", () => {
     await waitFor("Connected to My Store");
     expect(verify).toHaveBeenCalledWith("mystore.myshopify.com", { mode: "access-token", accessToken: "shpat_secret" });
     await waitFor("Also add the Shopify Dev MCP server?");
-    await press(ENTER);
-    await waitFor("Configure advanced settings?");
     await press(ENTER);
     await waitFor("Save .mcp.json?");
 
@@ -230,8 +226,6 @@ describe("setup wizard", () => {
     // No Shopify Dev MCP in the file, so not adding it is the default
     await waitFor("Also add the Shopify Dev MCP server?");
     await press(ENTER);
-    await waitFor("Configure advanced settings?");
-    await press(ENTER);
     await waitFor("Save .mcp.json?");
     await press(ENTER);
 
@@ -243,8 +237,8 @@ describe("setup wizard", () => {
     });
   });
 
-  it("collects client credentials and advanced settings, creating an uploads folder", async () => {
-    const { outcome, waitFor, press, save } = setup();
+  it("collects client credentials, with no advanced settings to ask about", async () => {
+    const { outcome, all, waitFor, press, save } = setup();
     await waitFor(MODE_QUESTION);
     await press(ENTER);
     await waitFor("Store domain");
@@ -258,18 +252,9 @@ describe("setup wizard", () => {
     await press("client-secret", ENTER);
     await waitFor("Also add the Shopify Dev MCP server?");
     await press("n");
-    await waitFor("Configure advanced settings?");
-    await press("y");
-    await waitFor("Read-only mode?");
-    await press("n");
-    await waitFor("Local file uploads");
-    await press(ENTER);
-    await waitFor("Toolsets to register");
-    // Toggle off the first toolset (products)
-    await press(" ", ENTER);
-    await waitFor("Turn off raw GraphQL");
-    await press("y");
     await waitFor("Save .mcp.json?");
+    expect(all()).not.toContain("advanced settings");
+    expect(all()).toContain("Settings: defaults");
     await press(ENTER);
 
     await expect(outcome).resolves.toBe("saved");
@@ -277,44 +262,9 @@ describe("setup wizard", () => {
       store: "mystore.myshopify.com",
       auth: { mode: "client-credentials", clientId: "client-id", clientSecret: "client-secret" },
       includeDevMcp: false,
+      advanced: undefined,
       disableThemeWrites: true,
-      advanced: {
-        readOnly: false,
-        allowLiveThemeWrites: false,
-        uploadDir: path.join(cwd, "uploads"),
-        toolsets: ["collections", "publishing", "metafields", "metaobjects", "customers", "orders", "inventory", "discounts", "files", "themes", "markets"],
-        disableRawGraphql: true,
-      },
     });
-  });
-
-  it("offers to create a custom upload folder that doesn't exist", async () => {
-    await mkdir(path.join(cwd, "uploads"));
-    const wizard = setup();
-    const { outcome, recent, waitFor, press, save } = wizard;
-
-    await toConnect(wizard);
-    await press("n");
-    await waitFor("Configure advanced settings?");
-    await press("y");
-    await waitFor("Read-only mode?");
-    await press("n");
-    await waitFor("Local file uploads");
-    expect(recent()).toContain(`Use ${path.join(cwd, "uploads")}`);
-    await press(DOWN, ENTER);
-    await waitFor("Folder the assistant may upload local files from");
-    await press("assets/new", ENTER);
-    await waitFor("Create it when saving?");
-    await press("y");
-    await waitFor("Toolsets to register");
-    await press(ENTER);
-    await waitFor("Turn off raw GraphQL");
-    await press("n");
-    await waitFor("Save .mcp.json?");
-    await press(ENTER);
-
-    await expect(outcome).resolves.toBe("saved");
-    expect(savedAnswers(save).advanced).toMatchObject({ uploadDir: path.join(cwd, "assets/new"), toolsets: undefined });
   });
 
   it("lets the store and credentials be re-entered after a failed check", async () => {
@@ -345,8 +295,6 @@ describe("setup wizard", () => {
     await waitFor("Connected to My Store");
     await waitFor("Also add the Shopify Dev MCP server?");
     await press("n");
-    await waitFor("Configure advanced settings?");
-    await press(ENTER);
     await waitFor("Save .mcp.json?");
     await press(ENTER);
 
@@ -400,8 +348,6 @@ describe("setup wizard", () => {
     await waitFor("won't start on v22.0.0 until you upgrade");
     await waitFor("Also add the Shopify Dev MCP server?");
     await press(ENTER);
-    await waitFor("Configure advanced settings?");
-    await press(ENTER);
     await waitFor("Save .mcp.json?");
     await press(ENTER);
 
@@ -431,7 +377,7 @@ describe("setup wizard: Horizon project", () => {
     expect(all()).toContain("Mode: Full theme design");
     expect(all()).toContain("Theme edits: on, including the live theme");
     expect(all()).toContain("Horizon project: v4.2.0 into ./theme, docs for 4.2.0");
-    expect(all()).toContain(`Advanced: live theme writes allowed; uploads from ${path.join(cwd, "uploads")}`);
+    expect(all()).toContain(`Settings: live theme writes allowed; uploads from ${path.join(cwd, "uploads")}`);
     expect(downloadHorizon).not.toHaveBeenCalled();
     await press(ENTER);
 

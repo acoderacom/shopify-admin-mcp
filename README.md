@@ -10,6 +10,7 @@ MCP server for Shopify's Admin GraphQL API: typed tools for common store tasks, 
 
 - **59 convenience tools** for products, collections, publishing, metafields, metaobjects, customers, orders, inventory, discounts, files, themes, and markets
 - **Raw GraphQL and live schema search** for anything the tools don't cover
+- **Theme files from a local folder**: with `--theme-dir`, theme writes send files by filename and a pull tool copies them back, so file content never has to pass through the conversation
 - **Setup wizard** that writes `.mcp.json` for you
 - **Safety controls**: read-only mode, toolsets, a live-theme guard, confined local uploads, and read-only or destructive annotations on every tool
 - **Both auth methods**: Dev Dashboard client credentials (refreshed automatically) and legacy `shpat_` tokens
@@ -26,7 +27,7 @@ npx -y @acodera/shopify-admin-mcp@latest setup
 It checks your Node.js version, then asks what to set up:
 
 - **Connect to a store only**: asks for your store and credentials, checks them, optionally adds the [Shopify Dev MCP](https://shopify.dev/docs/apps/build/devmcp) server, and creates or updates `.mcp.json`. Theme edits are turned off (`--disable-theme-writes`), so the assistant can read themes but not change them; everything else, such as products and metafields, can be changed.
-- **Full theme design**: also downloads Shopify's [Horizon](https://github.com/Shopify/horizon) theme into `./theme` and writes `CLAUDE.md`, `THEME.md` and `customizations.md` from [acoderacom/claude-horizon](https://github.com/acoderacom/claude-horizon), with the store and live theme filled in to `CLAUDE.md`. It switches on what `CLAUDE.md` describes: live theme writes, uploads from `./uploads`, and the Shopify Dev MCP. The store's live theme must be a Horizon version the template supports (listed in its `versions.json`), and the project gets that exact version. Otherwise setup says which version to switch to and stops without writing `.mcp.json`. Since the Shopify theme store only installs the newest Horizon, it offers to save an upload-ready `horizon-<version>.zip` for **Online Store → Themes → Add theme → Upload zip file**.
+- **Full theme design**: also downloads Shopify's [Horizon](https://github.com/Shopify/horizon) theme into `./theme` and writes `CLAUDE.md`, `THEME.md` and `customizations.md` from [acoderacom/claude-horizon](https://github.com/acoderacom/claude-horizon), with the store and live theme filled in to `CLAUDE.md`. It switches on what `CLAUDE.md` describes: live theme writes, theme files from `./theme`, uploads from `./uploads`, and the Shopify Dev MCP. The store's live theme must be a Horizon version the template supports (listed in its `versions.json`), and the project gets that exact version. Otherwise setup says which version to switch to and stops without writing `.mcp.json`. Since the Shopify theme store only installs the newest Horizon, it offers to save an upload-ready `horizon-<version>.zip` for **Online Store → Themes → Add theme → Upload zip file**.
 
 Current values are prefilled and other servers are kept. Setup doesn't ask about the other [options](#configuration), such as read-only mode, toolsets, local uploads or raw GraphQL; set them in `.mcp.json` by hand. Running "Connect to a store only" again keeps them; "Full theme design" sets the ones `CLAUDE.md` depends on. The secret is saved in plain text, so the file is written readable only by you and added to `.gitignore` in a git repo. Restart Claude Code (or run `/mcp`) to connect.
 
@@ -102,10 +103,19 @@ Always available: `shopify_graphql` (any query or mutation; queries only in read
 | `inventory` | `inventory_get_levels`, `inventory_adjust` |
 | `discounts` | `discounts_list`, `discount_get`, `discount_amount_off_create`, `discount_free_shipping_create`, `discount_bxgy_create`, `discount_activate`, `discount_deactivate`, `discount_delete`, `discount_codes_add` |
 | `files` | `files_list`, `file_upload`, `file_delete` |
-| `themes` | `themes_list`, `theme_files_list`, `theme_files_get`, `theme_files_upsert`, `theme_files_delete`, `theme_duplicate`, `theme_delete` |
+| `themes` | `themes_list`, `theme_files_list`, `theme_files_get`, `theme_files_upsert`, `theme_files_delete`, `theme_duplicate`, `theme_delete`; `theme_files_pull` with `--theme-dir` |
 | `markets` | `markets_list`, `market_get`, `market_create`, `market_update`, `market_delete` |
 
 A few inputs follow API 2026-10: collections define their products with `sources` (see `CollectionCreateSourceTargetInput` in `shopify_schema_details`), `shopify_inventory_adjust` needs the quantity you expect before the change (`changeFromQuantity`), and a discount takes one kind of eligibility (`customerIds`, `customerSegmentIds`, or `marketIds`) and items by collection or by product, not both.
+
+## Theme Files From a Local Folder
+
+Theme files are usually edited in a local copy of the theme first. Sending a file's content through `shopify_theme_files_upsert` makes the assistant write out the whole file, which takes minutes for a large section. With `--theme-dir` pointing at the local copy:
+
+- `shopify_theme_files_upsert` sends a file given only its `filename` from that folder: text as text, anything else as base64. When Shopify's write job is done, it reports for each file whether Shopify stored it as sent. Shopify regenerates JSON files such as templates (adding its header and reformatting them), so a file it returns changed is replaced in the folder with Shopify's copy.
+- `shopify_theme_files_pull` copies files or patterns such as `sections/*` from a theme into the folder, up to 50 per call, and returns only filenames and checksums. Files that already match are left alone.
+
+Files passed with `content`, `contentBase64` or `url` work as before.
 
 ## Safety
 
@@ -113,6 +123,7 @@ A few inputs follow API 2026-10: collections define their products with `sources
 - **Toolsets** (`--toolsets products,orders`) shorten the tool list, but raw GraphQL can still reach anything your scopes allow. Add `--disable-raw-graphql` to keep the assistant to the selected toolsets. Either way, the app's scopes are the real limit.
 - **The live theme** is protected: theme file writes and deletes on the published (`MAIN`) theme are refused, including through raw GraphQL, where `themePublish` is refused too. Duplicate the theme, edit the copy, and publish it from the Shopify admin, or start with `--allow-live-theme-writes`.
 - **Theme edits** can be turned off entirely with `--disable-theme-writes`: the theme write tools are left out, and raw GraphQL refuses every theme mutation (file writes, `themeCreate`, `themeUpdate`, `themeDelete`, `themeDuplicate`, `themePublish`) whichever theme it targets. It overrides `--allow-live-theme-writes`, and setup's "Connect to a store only" mode turns it on.
+- **The theme folder** (`--theme-dir`) is the only place theme files are sent from and pulled into. Paths that lead outside it, symlinks included, and files outside the theme's own folders (`assets`, `blocks`, `config`, `layout`, `locales`, `sections`, `snippets`, `templates`) are refused.
 - **Local uploads** are off until you set `--upload-dir`. `shopify_file_upload` then accepts files inside that folder (symlinks resolved), as well as public URLs that Shopify fetches itself.
 - **Credentials** are only ever sent to `*.myshopify.com`, and the server warns when secrets are passed as flags, since other processes can see them.
 
@@ -129,6 +140,7 @@ Every option works as a flag after the package name (in `args`) or as an environ
 | `--api-version` | `SHOPIFY_API_VERSION` | `2026-10` | `YYYY-MM` or `unstable` |
 | `--toolsets` | `SHOPIFY_TOOLSETS` | all | Comma-separated toolsets to register |
 | `--upload-dir` | `SHOPIFY_UPLOAD_DIR` | off | Absolute path that local uploads are confined to |
+| `--theme-dir` | `SHOPIFY_THEME_DIR` | off | Absolute path of a local copy of the theme that theme files are sent from and pulled into |
 | `--read-only` | `SHOPIFY_READ_ONLY` | off | Read tools only, no mutations |
 | `--allow-live-theme-writes` | `SHOPIFY_ALLOW_LIVE_THEME_WRITES` | off | Allow writing to and publishing the live theme |
 | `--disable-theme-writes` | `SHOPIFY_DISABLE_THEME_WRITES` | off | Refuse every theme change; overrides `--allow-live-theme-writes` |
@@ -138,7 +150,7 @@ For example: `"args": ["-y", "@acodera/shopify-admin-mcp", "--read-only", "--too
 
 - On/off variables accept `true` or `1`. When an option is set both ways, the flag wins; for on/off options, either one turns it on.
 - Blank values and unfilled references (`${VAR}`, `$VAR`) count as not set, so one config can list both auth methods. If both are filled in, the access token is used.
-- Use an absolute `--upload-dir`, since MCP clients start the server from their own working directory.
+- Use an absolute `--upload-dir` and `--theme-dir`, since MCP clients start the server from their own working directory.
 - With an older `--api-version`, raw GraphQL works but some tools may not. The server logs a warning if Shopify serves a different version than the one requested.
 
 ## Schema Exploration

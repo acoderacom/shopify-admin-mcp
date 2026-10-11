@@ -21,6 +21,8 @@ export interface AdvancedAnswers {
   allowLiveThemeWrites: boolean;
   /** Absolute path; undefined leaves local uploads off. */
   uploadDir?: string;
+  /** Absolute path of the local theme copy that theme files are sent from and pulled into; undefined leaves that off. */
+  themeDir?: string;
   /** Undefined registers every toolset. */
   toolsets?: Toolset[];
   disableRawGraphql: boolean;
@@ -86,6 +88,7 @@ const VALUE_FLAGS = [
   "--client-secret",
   "--clientSecret",
   "--upload-dir",
+  "--theme-dir",
   "--toolsets",
 ];
 const BOOLEAN_FLAGS = ["--read-only", "--allow-live-theme-writes", "--disable-theme-writes", "--disable-raw-graphql"];
@@ -98,6 +101,7 @@ const ENV = {
   readOnly: "SHOPIFY_READ_ONLY",
   allowLiveThemeWrites: "SHOPIFY_ALLOW_LIVE_THEME_WRITES",
   uploadDir: "SHOPIFY_UPLOAD_DIR",
+  themeDir: "SHOPIFY_THEME_DIR",
   toolsets: "SHOPIFY_TOOLSETS",
   disableRawGraphql: "SHOPIFY_DISABLE_RAW_GRAPHQL",
   disableThemeWrites: "SHOPIFY_DISABLE_THEME_WRITES",
@@ -169,6 +173,7 @@ export function describeExisting(config: McpConfig | undefined): ExistingSetup {
   const clientId = option(entry, ["--client-id", "--clientId"], ENV.clientId);
   const clientSecret = option(entry, ["--client-secret", "--clientSecret"], ENV.clientSecret);
   const uploadDir = option(entry, ["--upload-dir"], ENV.uploadDir);
+  const themeDir = option(entry, ["--theme-dir"], ENV.themeDir);
   const toolsets = option(entry, ["--toolsets"], ENV.toolsets)
     ?.split(",")
     .map((name) => name.trim())
@@ -188,6 +193,7 @@ export function describeExisting(config: McpConfig | undefined): ExistingSetup {
       readOnly: flag(entry, "--read-only", ENV.readOnly),
       allowLiveThemeWrites: flag(entry, "--allow-live-theme-writes", ENV.allowLiveThemeWrites),
       uploadDir,
+      themeDir,
       toolsets: toolsets?.length ? toolsets : undefined,
       disableRawGraphql: flag(entry, "--disable-raw-graphql", ENV.disableRawGraphql),
     },
@@ -234,6 +240,7 @@ function buildEnv(
   setFlag(ENV.allowLiveThemeWrites, advanced.allowLiveThemeWrites && !answers.disableThemeWrites);
   setFlag(ENV.disableThemeWrites, answers.disableThemeWrites);
   set(ENV.uploadDir, advanced.uploadDir);
+  set(ENV.themeDir, advanced.themeDir);
   set(ENV.toolsets, advanced.toolsets?.join(","));
   setFlag(ENV.disableRawGraphql, advanced.disableRawGraphql);
 

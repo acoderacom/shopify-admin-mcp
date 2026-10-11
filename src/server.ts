@@ -23,7 +23,7 @@ import { registerMarketTools } from "./tools/markets.js";
 const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
 
 export type ServerOptions = Pick<Config, "readOnly"> &
-  Partial<Pick<Config, "toolsets" | "uploadDir" | "allowLiveThemeWrites" | "disableThemeWrites" | "disableRawGraphql">>;
+  Partial<Pick<Config, "toolsets" | "uploadDir" | "themeDir" | "allowLiveThemeWrites" | "disableThemeWrites" | "disableRawGraphql">>;
 
 type RegisterToolset = (
   server: ToolRegistrar,
@@ -59,6 +59,14 @@ function instructions(options: ServerOptions): string {
   );
   if (options.disableThemeWrites && !options.readOnly) {
     lines.push("Theme edits are disabled: themes and their files can be read but not changed, published, created or deleted.");
+  }
+  const themeTools = !options.toolsets || options.toolsets.includes("themes");
+  if (options.themeDir && themeTools && !options.readOnly) {
+    lines.push(
+      options.disableThemeWrites
+        ? `shopify_theme_files_pull copies theme files into the local folder ${options.themeDir} without returning their content.`
+        : `Theme files can be sent from and pulled into the local folder ${options.themeDir}: give shopify_theme_files_upsert a filename without content to send that file, and use shopify_theme_files_pull to copy files from Shopify into the folder. Neither passes file content through the conversation.`
+    );
   }
   if (!options.disableRawGraphql) {
     lines.push(

@@ -25,6 +25,8 @@ export interface Config {
   toolsets?: Toolset[];
   /** Directory that local file uploads are confined to; undefined disables local uploads. */
   uploadDir?: string;
+  /** Local copy of the theme that theme file writes can be sent from and pulled into; undefined turns that off. */
+  themeDir?: string;
   allowLiveThemeWrites: boolean;
   /** Refuses every theme change, published or not, through the theme tools and raw GraphQL. */
   disableThemeWrites: boolean;
@@ -112,6 +114,7 @@ export function parseArgs(argv: string[]): Config {
     getEnv("SHOPIFY_API_VERSION") ??
     DEFAULT_API_VERSION;
   const uploadDir = getArg(argv, "--upload-dir") ?? getEnv("SHOPIFY_UPLOAD_DIR");
+  const themeDir = getArg(argv, "--theme-dir") ?? getEnv("SHOPIFY_THEME_DIR");
 
   if (!store) fail("--store is required (e.g. --store mystore.myshopify.com)");
 
@@ -140,6 +143,7 @@ export function parseArgs(argv: string[]): Config {
     readOnly: getFlag(argv, "--read-only", "SHOPIFY_READ_ONLY"),
     toolsets: parseToolsets(getArg(argv, "--toolsets") ?? getEnv("SHOPIFY_TOOLSETS")),
     uploadDir: uploadDir ? path.resolve(uploadDir) : undefined,
+    themeDir: themeDir ? path.resolve(themeDir) : undefined,
     allowLiveThemeWrites: getFlag(
       argv,
       "--allow-live-theme-writes",

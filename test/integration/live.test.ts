@@ -647,9 +647,12 @@ describe.skipIf(!writesEnabled)("live store: themes", { timeout: 300_000 }, () =
 describe.skipIf(!writesEnabled)("live store: markets", { timeout: TIMEOUT }, () => {
   let client: Client;
   let marketId: string | undefined;
+  let currency: string;
 
   beforeAll(async () => {
     ({ client } = await connectLive(false));
+    // A store whose payment gateway supports one currency refuses a market in any other
+    currency = (await graphql(client, "{ shop { currencyCode } }")).shop.currencyCode;
   }, TIMEOUT);
 
   afterAll(async () => {
@@ -662,13 +665,13 @@ describe.skipIf(!writesEnabled)("live store: markets", { timeout: TIMEOUT }, () 
       name: `[MCP test] ${Date.now()}`,
       status: "DRAFT",
       countryCodes: ["SG"],
-      currencySettings: { baseCurrency: "SGD", localCurrencies: false },
+      currencySettings: { baseCurrency: currency, localCurrencies: false },
     });
     const market = d.marketCreate.market;
     marketId = market.id;
     expect(market.status).toBe("DRAFT");
     expect(market.conditions.regionsCondition.regions.nodes.map((r: Data) => r.code)).toEqual(["SG"]);
-    expect(market.currencySettings.baseCurrency.currencyCode).toBe("SGD");
+    expect(market.currencySettings.baseCurrency.currencyCode).toBe(currency);
   });
 
   it("updates its name and countries", async () => {
@@ -701,12 +704,18 @@ describe.skipIf(!writesEnabled)("live store: discounts", { timeout: TIMEOUT }, (
   let client: Client;
   let productId: string;
   let collectionId: string;
+  let shippingCountry: string | undefined;
 
   beforeAll(async () => {
     ({ client } = await connectLive(false));
-    const d = await graphql(client, "{ products(first: 1) { nodes { id } } collections(first: 1) { nodes { id } } }");
+    const d = await graphql(
+      client,
+      "{ products(first: 1) { nodes { id } } collections(first: 1) { nodes { id } } shop { shipsToCountries } }"
+    );
     productId = d.products.nodes[0].id;
     collectionId = d.collections.nodes[0].id;
+    // A free shipping discount can only name countries the shop's shipping zones cover
+    shippingCountry = d.shop.shipsToCountries[0];
   }, TIMEOUT);
 
   afterAll(async () => {
@@ -736,7 +745,8 @@ describe.skipIf(!writesEnabled)("live store: discounts", { timeout: TIMEOUT }, (
     expect(fixed.discount).toMatchObject({ __typename: "DiscountAutomaticBasic", status: "SCHEDULED" });
 
     const shipping = await create("shopify_discount_free_shipping_create", {
-      method: "code", title: `[MCP test] ship ${stamp}`, code: `MCPSHIP${stamp}`, countryCodes: ["ID"], maximumShippingPrice: "20000",
+      method: "code", title: `[MCP test] ship ${stamp}`, code: `MCPSHIP${stamp}`, maximumShippingPrice: "20000",
+      ...(shippingCountry ? { countryCodes: [shippingCountry] } : {}),
     });
     expect(shipping.discount.__typename).toBe("DiscountCodeFreeShipping");
 

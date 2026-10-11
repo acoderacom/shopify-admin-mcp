@@ -11,6 +11,7 @@ const ENV_KEYS = [
   "SHOPIFY_READ_ONLY",
   "SHOPIFY_TOOLSETS",
   "SHOPIFY_UPLOAD_DIR",
+  "SHOPIFY_THEME_DIR",
   "SHOPIFY_ALLOW_LIVE_THEME_WRITES",
   "SHOPIFY_DISABLE_RAW_GRAPHQL",
   "SHOPIFY_DISABLE_THEME_WRITES",
@@ -126,6 +127,14 @@ describe("parseArgs", () => {
     vi.stubEnv("SHOPIFY_ALLOW_LIVE_THEME_WRITES", "1");
     const config = parse("--store", "s", "--access-token", "t");
     expect(config).toMatchObject({ toolsets: ["files"], uploadDir: "/tmp/uploads", allowLiveThemeWrites: true });
+  });
+
+  it("resolves the theme folder from --theme-dir or SHOPIFY_THEME_DIR", () => {
+    expect(parse("--store", "s", "--access-token", "t", "--theme-dir", "theme").themeDir).toBe(path.resolve("theme"));
+    vi.stubEnv("SHOPIFY_THEME_DIR", "/tmp/project/theme");
+    expect(parse("--store", "s", "--access-token", "t").themeDir).toBe("/tmp/project/theme");
+    vi.stubEnv("SHOPIFY_THEME_DIR", "${SHOPIFY_THEME_DIR}");
+    expect(parse("--store", "s", "--access-token", "t").themeDir).toBeUndefined();
   });
 
   it("disables raw GraphQL with --disable-raw-graphql or SHOPIFY_DISABLE_RAW_GRAPHQL", () => {

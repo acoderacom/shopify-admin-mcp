@@ -72,6 +72,7 @@ describe("describeExisting", () => {
             SHOPIFY_READ_ONLY: "false",
             SHOPIFY_ALLOW_LIVE_THEME_WRITES: "true",
             SHOPIFY_UPLOAD_DIR: "/tmp/uploads",
+            SHOPIFY_THEME_DIR: "/tmp/project/theme",
             SHOPIFY_TOOLSETS: "products, themes,unknown",
           },
         },
@@ -93,6 +94,7 @@ describe("describeExisting", () => {
         readOnly: false,
         allowLiveThemeWrites: true,
         uploadDir: "/tmp/uploads",
+        themeDir: "/tmp/project/theme",
         toolsets: ["products", "themes"],
         disableRawGraphql: false,
       },
@@ -200,6 +202,7 @@ describe("applyAnswers", () => {
         readOnly: false,
         allowLiveThemeWrites: true,
         uploadDir: "/tmp/uploads",
+        themeDir: "/tmp/project/theme",
         toolsets: ["products", "themes"],
         disableRawGraphql: true,
       },
@@ -211,6 +214,7 @@ describe("applyAnswers", () => {
       SHOPIFY_CLIENT_SECRET: "secret",
       SHOPIFY_ALLOW_LIVE_THEME_WRITES: "true",
       SHOPIFY_UPLOAD_DIR: "/tmp/uploads",
+      SHOPIFY_THEME_DIR: "/tmp/project/theme",
       SHOPIFY_TOOLSETS: "products,themes",
       SHOPIFY_DISABLE_RAW_GRAPHQL: "true",
     });
@@ -230,6 +234,19 @@ describe("applyAnswers", () => {
 
     expect(entry.args).toEqual(["-y", "@acodera/shopify-admin-mcp@latest"]);
     expect(entry.env).toMatchObject({ SHOPIFY_ALLOW_LIVE_THEME_WRITES: "false", SHOPIFY_DISABLE_THEME_WRITES: "true" });
+  });
+
+  it("moves a --theme-dir flag into env, so the env value isn't overridden", () => {
+    const config = {
+      mcpServers: {
+        "shopify-admin-mcp": { command: "npx", args: ["-y", "@acodera/shopify-admin-mcp", "--theme-dir", "/old/theme"], env: {} },
+      },
+    };
+    expect(describeExisting(config).advanced.themeDir).toBe("/old/theme");
+
+    const entry = applyAnswers(config, answers).mcpServers!["shopify-admin-mcp"]!;
+    expect(entry.args).toEqual(["-y", "@acodera/shopify-admin-mcp"]);
+    expect(entry.env).toMatchObject({ SHOPIFY_THEME_DIR: "/old/theme" });
   });
 
   it("keeps the advanced settings in the file when they weren't asked", () => {

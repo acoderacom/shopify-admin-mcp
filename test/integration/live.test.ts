@@ -5,7 +5,7 @@
  * they create, and delete them afterwards. Use a development store.
  */
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -561,6 +561,61 @@ describe.skipIf(!writesEnabled)("live store: themes", { timeout: 300_000 }, () =
 
     const deleted = await data(client, "shopify_theme_files_delete", { themeId: copyId, filenames: [filename] });
     expect(deleted.themeFilesDelete.deletedThemeFiles).toEqual([{ filename }]);
+  });
+
+  it("sends files from a theme folder by filename and pulls them back", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "shopify-mcp-live-theme-"));
+    const sendDir = path.join(root, "send");
+    const pullDir = path.join(root, "pull");
+    const stamp = Date.now();
+    const files: Record<string, Buffer> = {
+      "snippets/mcp-test-local.liquid": Buffer.from(`{% comment %}MCP test ${stamp}{% endcomment %}\n`),
+      // A 1x1 PNG, so the file goes as base64
+      "assets/mcp-test.png": Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "base64"
+      ),
+      // Shopify adds its generated header to JSON templates, so this one comes back changed
+      "templates/page.mcp-test.json": Buffer.from(JSON.stringify({ sections: { main: { type: "main-page", settings: {} } }, order: ["main"] })),
+    };
+    const filenames = Object.keys(files);
+    const local = await connectLive(false, { themeDir: sendDir });
+    try {
+      for (const [filename, data] of Object.entries(files)) {
+        await mkdir(path.dirname(path.join(sendDir, filename)), { recursive: true });
+        await writeFile(path.join(sendDir, filename), data);
+      }
+
+      const sent = await callTool(local.client, "shopify_theme_files_upsert", { themeId: copyId, files: filenames.map((filename) => ({ filename })) });
+      expect(sent.isError, resultText(sent).slice(0, 500)).toBeFalsy();
+      const reports = JSON.parse(resultText(sent)).files as Array<{ filename: string; stored: string; themeFolder?: string }>;
+      console.log("upsert from the theme folder:", JSON.stringify(reports));
+      for (const report of reports) expect(["as sent", "changed by Shopify"], report.filename).toContain(report.stored);
+      expect(reports.find((r) => r.filename === "snippets/mcp-test-local.liquid")?.stored).toBe("as sent");
+      for (const report of reports.filter((r) => r.stored === "changed by Shopify")) {
+        expect(report.themeFolder).toBe("updated to Shopify's copy");
+      }
+
+      // Pulling into an empty folder gives the same bytes as the send folder, which now matches Shopify
+      const puller = await connectLive(false, { themeDir: pullDir });
+      await mkdir(pullDir);
+      const pulled = await callTool(puller.client, "shopify_theme_files_pull", { themeId: copyId, filenames });
+      expect(pulled.isError, resultText(pulled).slice(0, 500)).toBeFalsy();
+      console.log("pull:", JSON.stringify(JSON.parse(resultText(pulled)).files));
+      for (const filename of filenames) {
+        expect(await readFile(path.join(pullDir, filename)), filename).toEqual(await readFile(path.join(sendDir, filename)));
+      }
+      expect(resultText(pulled)).not.toContain(`MCP test ${stamp}`);
+
+      // Pulling again leaves every file alone
+      const again = JSON.parse(resultText(await callTool(puller.client, "shopify_theme_files_pull", { themeId: copyId, filenames })));
+      expect(again.files.map((f: Data) => f.status)).toEqual(filenames.map(() => "unchanged"));
+      await puller.client.close();
+    } finally {
+      await callTool(local.client, "shopify_theme_files_delete", { themeId: copyId, filenames });
+      await local.client.close();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("refuses to write to the live theme", async () => {

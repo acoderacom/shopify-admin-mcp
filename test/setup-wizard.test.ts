@@ -374,7 +374,9 @@ describe("setup wizard: Horizon project", () => {
     expect(all()).toContain("Mode: Full theme design");
     expect(all()).toContain("Theme edits: on, including the live theme");
     expect(all()).toContain("Horizon project: Horizon 4.2.0 in ./theme, with its THEME.md");
-    expect(all()).toContain(`Settings: live theme writes allowed; uploads from ${path.join(cwd, "uploads")}`);
+    expect(all()).toContain(
+      `Settings: live theme writes allowed; uploads from ${path.join(cwd, "uploads")}; theme files from ${path.join(cwd, "theme")}`
+    );
     expect(downloadHorizon).not.toHaveBeenCalled();
     await press(ENTER);
 
@@ -382,7 +384,13 @@ describe("setup wizard: Horizon project", () => {
     expect(savedAnswers(save)).toMatchObject({
       includeDevMcp: true,
       disableThemeWrites: false,
-      advanced: { readOnly: false, allowLiveThemeWrites: true, uploadDir: path.join(cwd, "uploads"), disableRawGraphql: false },
+      advanced: {
+        readOnly: false,
+        allowLiveThemeWrites: true,
+        uploadDir: path.join(cwd, "uploads"),
+        themeDir: path.join(cwd, "theme"),
+        disableRawGraphql: false,
+      },
     });
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(downloadHorizon.mock.invocationCallOrder[0]!);
     expect(downloadHorizon).toHaveBeenCalledWith(HORIZON_420);

@@ -95,6 +95,7 @@ function describeAdvanced(advanced: AdvancedAnswers): string {
   if (advanced.readOnly) parts.push("read-only");
   if (advanced.allowLiveThemeWrites) parts.push("live theme writes allowed");
   if (advanced.uploadDir) parts.push(`uploads from ${advanced.uploadDir}`);
+  if (advanced.themeDir) parts.push(`theme files from ${advanced.themeDir}`);
   if (advanced.toolsets) parts.push(`toolsets: ${advanced.toolsets.join(", ")}`);
   if (advanced.disableRawGraphql) parts.push("raw GraphQL off");
   return parts.length ? parts.join("; ") : "defaults";
@@ -351,11 +352,12 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         readOnly: false,
         allowLiveThemeWrites: true,
         uploadDir: path.join(cwd, UPLOADS_FOLDER),
+        themeDir: path.join(cwd, THEME_DIR),
         toolsets: undefined,
         disableRawGraphql: false,
       };
       p.log.info(
-        "CLAUDE.md has Claude edit the live theme, upload files from ./uploads and check code with the Shopify Dev MCP, so those are switched on.",
+        `CLAUDE.md has Claude edit the live theme from ./${THEME_DIR}, upload files from ./${UPLOADS_FOLDER} and check code with the Shopify Dev MCP, so those are switched on.`,
         io
       );
       if (!devMcpNode.ok) {

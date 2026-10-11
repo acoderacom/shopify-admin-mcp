@@ -178,6 +178,8 @@ describe("setup wizard", () => {
     expect(all()).not.toContain("shpat_secret");
     expect(all()).toContain("Mode: Connect to a store only");
     expect(all()).toContain("Theme edits: off");
+    expect(all()).toContain("such as product images, go in ./uploads");
+    expect(all()).toContain(`Settings: uploads from ${path.join(cwd, "uploads")}`);
     expect(all()).not.toContain("Horizon project:");
 
     await press(ENTER);
@@ -186,7 +188,14 @@ describe("setup wizard", () => {
       store: "mystore.myshopify.com",
       auth: { mode: "access-token", accessToken: "shpat_secret" },
       includeDevMcp: true,
-      advanced: undefined,
+      advanced: {
+        readOnly: false,
+        allowLiveThemeWrites: false,
+        uploadDir: path.join(cwd, "uploads"),
+        themeDir: undefined,
+        toolsets: undefined,
+        disableRawGraphql: false,
+      },
       disableThemeWrites: true,
     });
     expect(downloadHorizon).not.toHaveBeenCalled();
@@ -253,17 +262,55 @@ describe("setup wizard", () => {
     await press("n");
     await waitFor("Save .mcp.json?");
     expect(all()).not.toContain("advanced settings");
-    expect(all()).toContain("Settings: defaults");
+    expect(all()).toContain(`Settings: uploads from ${path.join(cwd, "uploads")}`);
     await press(ENTER);
 
     await expect(outcome).resolves.toBe("saved");
-    expect(savedAnswers(save)).toEqual({
+    expect(savedAnswers(save)).toMatchObject({
       store: "mystore.myshopify.com",
       auth: { mode: "client-credentials", clientId: "client-id", clientSecret: "client-secret" },
       includeDevMcp: false,
-      advanced: undefined,
+      advanced: { uploadDir: path.join(cwd, "uploads") },
       disableThemeWrites: true,
     });
+  });
+
+  it("keeps the other settings and an upload folder already in the file, minus live theme writes", async () => {
+    const existing = describeExisting({
+      mcpServers: {
+        "shopify-admin-mcp": {
+          args: ["@acodera/shopify-admin-mcp@latest"],
+          env: {
+            SHOPIFY_STORE: "old.myshopify.com",
+            SHOPIFY_ACCESS_TOKEN: "shpat_current",
+            SHOPIFY_UPLOAD_DIR: "/srv/product-images",
+            SHOPIFY_ALLOW_LIVE_THEME_WRITES: "true",
+            SHOPIFY_READ_ONLY: "true",
+          },
+        },
+      },
+    });
+    const { outcome, all, waitFor, press, save } = setup({ existing });
+    await waitFor(MODE_QUESTION);
+    await press(ENTER);
+    await waitFor("Store domain");
+    await press(ENTER);
+    await waitFor("How does the app authenticate?");
+    await press(ENTER);
+    await waitFor("press Enter to keep the current one");
+    await press(ENTER);
+    await waitFor("Also add the Shopify Dev MCP server?");
+    await press(ENTER);
+    await waitFor("Save .mcp.json?");
+
+    expect(all()).not.toContain("go in ./uploads");
+    expect(all()).toContain("Settings: read-only; uploads from /srv/product-images");
+    await press(ENTER);
+
+    await expect(outcome).resolves.toBe("saved");
+    // Undefined keeps the file's settings; saving turns live theme writes off for this mode
+    expect(savedAnswers(save).advanced).toBeUndefined();
+    expect(savedAnswers(save).disableThemeWrites).toBe(true);
   });
 
   it("lets the store and credentials be re-entered after a failed check", async () => {

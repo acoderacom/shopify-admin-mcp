@@ -47,7 +47,7 @@ export interface WizardOptions {
   output?: Writable;
 }
 
-// The folder theme design lets local uploads come from, as CLAUDE.md describes
+// The folder local uploads come from in both modes, as CLAUDE.md describes for theme design
 const UPLOADS_FOLDER = "uploads";
 
 const AUTH_LABELS: Record<AuthAnswers["mode"], string> = {
@@ -149,8 +149,8 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         message: "How does the app authenticate?",
         initialValue: current?.mode ?? existing.authMode ?? "access-token",
         options: [
-          { value: "access-token", label: AUTH_LABELS["access-token"], hint: "legacy custom app" },
-          { value: "client-credentials", label: AUTH_LABELS["client-credentials"], hint: "dev dashboard app" },
+          { value: "access-token", label: AUTH_LABELS["access-token"] },
+          { value: "client-credentials", label: AUTH_LABELS["client-credentials"] },
         ],
       })
     );
@@ -298,12 +298,8 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         message: "What do you want to set up?",
         initialValue: themeProject ? "theme" : "connect",
         options: [
-          { value: "connect", label: MODE_LABELS.connect, hint: ".mcp.json for Claude Code, without theme edits" },
-          {
-            value: "theme",
-            label: MODE_LABELS.theme,
-            hint: `Horizon in ./${THEME_DIR}, plus CLAUDE.md, THEME.md and customizations.md`,
-          },
+          { value: "connect", label: MODE_LABELS.connect },
+          { value: "theme", label: MODE_LABELS.theme },
         ],
       })
     );
@@ -364,6 +360,14 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         p.log.warn(`The Shopify Dev MCP won't start on ${nodeVersion} until you upgrade Node.js.`, io);
       }
     } else {
+      // Product images and other local files can only be uploaded from a folder set in the file
+      if (!existing.advanced.uploadDir) {
+        advanced = { ...existing.advanced, allowLiveThemeWrites: false, uploadDir: path.join(cwd, UPLOADS_FOLDER) };
+        p.log.info(
+          `Local files to upload to the store, such as product images, go in ./${UPLOADS_FOLDER}, so uploads from it are switched on.`,
+          io
+        );
+      }
       if (!devMcpNode.ok) {
         p.log.warn(`The Shopify Dev MCP won't start on ${nodeVersion} until you upgrade Node.js.`, io);
       }

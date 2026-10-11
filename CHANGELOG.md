@@ -1,5 +1,11 @@
 # @acodera/shopify-admin-mcp
 
+## 1.8.1
+
+### Patch Changes
+
+- [#33](https://github.com/acoderacom/shopify-admin-mcp/pull/33) [`7d81838`](https://github.com/acoderacom/shopify-admin-mcp/commit/7d8183878fa5ac869918272131d512e7dd6dddd1) Thanks [@acoderacom](https://github.com/acoderacom)! - Setup's "Connect to a store only" mode now switches on local uploads from `./uploads` (and creates the folder), so product images and other local files can be uploaded without editing `.mcp.json`. An upload folder already set in `.mcp.json` is kept. The setup questions also drop their option hints.
+
 ## 1.8.0
 
 ### Minor Changes

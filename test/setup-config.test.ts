@@ -264,7 +264,8 @@ describe("writeMcpConfig", () => {
     const file = await writeMcpConfig(dir, applyAnswers(undefined, answers));
 
     expect(await readFile(file, "utf8")).toBe(`${JSON.stringify(applyAnswers(undefined, answers), null, 2)}\n`);
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    // Windows has no owner-only file mode; the file gets its folder's permissions there
+    if (process.platform !== "win32") expect((await stat(file)).mode & 0o777).toBe(0o600);
     expect(await readdir(dir)).toEqual([".mcp.json"]);
   });
 });

@@ -10,8 +10,9 @@ import { pathToFileURL } from "node:url";
 const repo = path.resolve(import.meta.dirname, "../..");
 const { version } = JSON.parse(await readFile(path.join(repo, "package.json"), "utf8"));
 const windows = process.platform === "win32";
-// npm is npm.cmd on Windows, which Node only starts through a shell, so run it as one quoted command line
-const npm = (args, cwd) => execSync(["npm", ...args].map((a) => `"${a}"`).join(" "), { cwd, encoding: "utf8" });
+// npm is npm.cmd on Windows, which Node only starts through a shell, so run it as one command line.
+// "npm" itself stays unquoted: cmd.exe gives a quoted bare batch name the wrong folder for its own files.
+const npm = (args, cwd) => execSync(`npm ${args.map((a) => `"${a}"`).join(" ")}`, { cwd, encoding: "utf8" });
 
 const dir = await mkdtemp(path.join(tmpdir(), "shopify-mcp-smoke-"));
 let child;

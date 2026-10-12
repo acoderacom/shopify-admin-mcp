@@ -119,7 +119,9 @@ describe("shopify_file_upload from a local path", () => {
     expect(fake.calls).toHaveLength(0);
   });
 
-  it.each(["../secret.txt", "/etc/hosts"])("refuses paths outside the upload directory: %s", async (filePath) => {
+  const outsidePaths = ["../secret.txt", "../uploads-other/logo.png", path.resolve("/etc/hosts")];
+  if (process.platform === "win32") outsidePaths.push("C:\\Windows\\win.ini", "D:\\uploads\\logo.png");
+  it.each(outsidePaths)("refuses paths outside the upload directory: %s", async (filePath) => {
     const { client, fake } = await connect({ uploadDir });
     const result = await callTool(client, "shopify_file_upload", { path: filePath });
 
@@ -127,6 +129,16 @@ describe("shopify_file_upload from a local path", () => {
     expect(resultText(result)).toContain("outside the upload directory");
     expect(fake.calls).toHaveLength(0);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.runIf(process.platform === "win32")("accepts a full path inside the upload directory whatever its letter case", async () => {
+    const { client, fake } = await connect({ uploadDir });
+    fake.responses.push(staged, created, fileNode("READY"));
+
+    const result = await callTool(client, "shopify_file_upload", { path: path.join(uploadDir, "logo.png").toUpperCase() });
+
+    expect(result.isError, resultText(result)).toBeFalsy();
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("refuses symlinks that point outside the upload directory", async () => {

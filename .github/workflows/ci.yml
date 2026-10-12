@@ -47,5 +47,8 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Start the packed server
+        run: node test/smoke/packed-server.mjs
+
       - name: Check package contents
         run: npm pack --dry-run

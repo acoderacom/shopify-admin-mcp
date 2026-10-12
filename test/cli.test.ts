@@ -126,13 +126,13 @@ describe("parseArgs", () => {
     vi.stubEnv("SHOPIFY_UPLOAD_DIR", "/tmp/uploads");
     vi.stubEnv("SHOPIFY_ALLOW_LIVE_THEME_WRITES", "1");
     const config = parse("--store", "s", "--access-token", "t");
-    expect(config).toMatchObject({ toolsets: ["files"], uploadDir: "/tmp/uploads", allowLiveThemeWrites: true });
+    expect(config).toMatchObject({ toolsets: ["files"], uploadDir: path.resolve("/tmp/uploads"), allowLiveThemeWrites: true });
   });
 
   it("resolves the theme folder from --theme-dir or SHOPIFY_THEME_DIR", () => {
     expect(parse("--store", "s", "--access-token", "t", "--theme-dir", "theme").themeDir).toBe(path.resolve("theme"));
     vi.stubEnv("SHOPIFY_THEME_DIR", "/tmp/project/theme");
-    expect(parse("--store", "s", "--access-token", "t").themeDir).toBe("/tmp/project/theme");
+    expect(parse("--store", "s", "--access-token", "t").themeDir).toBe(path.resolve("/tmp/project/theme"));
     vi.stubEnv("SHOPIFY_THEME_DIR", "${SHOPIFY_THEME_DIR}");
     expect(parse("--store", "s", "--access-token", "t").themeDir).toBeUndefined();
   });

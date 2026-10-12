@@ -70,10 +70,19 @@ async function resolveUploadPath(filePath: string, uploadDir: string | undefined
     );
   }
   const root = await realpath(uploadDir);
-  const resolved = await realpath(path.resolve(root, filePath));
-  if (!resolved.startsWith(root + path.sep)) {
-    throw new Error(`"${filePath}" is outside the upload directory ${root}`);
-  }
+  // path.relative compares case-insensitively on Windows and gives an absolute path for another drive
+  const inside = (target: string) => {
+    const relative = path.relative(root, target);
+    return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  };
+  const outside = new Error(`"${filePath}" is outside the upload directory ${root}`);
+  // Checked with symlinks and Windows short names resolved; a missing file outside the folder
+  // gets the same answer as an existing one, so the error doesn't reveal what exists there
+  const target = path.resolve(root, filePath);
+  const resolved = await realpath(target).catch((err: unknown) => {
+    throw inside(target) ? err : outside;
+  });
+  if (!inside(resolved)) throw outside;
   if (!(await stat(resolved)).isFile()) {
     throw new Error(`"${filePath}" is not a file`);
   }

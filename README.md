@@ -24,12 +24,12 @@ Run the setup wizard in your project folder:
 npx -y @acodera/shopify-admin-mcp@latest setup
 ```
 
-It checks your Node.js version, then asks what to set up:
+It runs on macOS, Linux and Windows. It checks your Node.js version, then asks what to set up:
 
 - **Connect to a store only**: asks for your store and credentials, checks them, optionally adds the [Shopify Dev MCP](https://shopify.dev/docs/apps/build/devmcp) server, and creates or updates `.mcp.json`. Theme edits are turned off (`--disable-theme-writes`), so the assistant can read themes but not change them; everything else, such as products and metafields, can be changed. Local files, such as product images, are uploaded from `./uploads`, which setup creates, unless `.mcp.json` already sets an upload folder.
 - **Full theme design**: also downloads Shopify's [Horizon](https://github.com/Shopify/horizon) theme into `./theme` and writes `CLAUDE.md`, `THEME.md` and `customizations.md` from [acoderacom/claude-horizon](https://github.com/acoderacom/claude-horizon), with the store and live theme filled in to `CLAUDE.md`. It switches on what `CLAUDE.md` describes: live theme writes, theme files from `./theme`, uploads from `./uploads`, and the Shopify Dev MCP. The store's live theme must be a Horizon version the template supports (listed in its `versions.json`), and the project gets that exact version. Otherwise setup says which version to switch to and stops without writing `.mcp.json`. Since the Shopify theme store only installs the newest Horizon, it offers to save an upload-ready `horizon-<version>.zip` for **Online Store → Themes → Add theme → Upload zip file**.
 
-Current values are prefilled and other servers are kept. Setup doesn't ask about the other [options](#configuration), such as read-only mode, toolsets or raw GraphQL; set them in `.mcp.json` by hand. Running "Connect to a store only" again keeps them; "Full theme design" sets the ones `CLAUDE.md` depends on. The secret is saved in plain text, so the file is written readable only by you and added to `.gitignore` in a git repo. Restart Claude Code (or run `/mcp`) to connect.
+Current values are prefilled and other servers are kept. Setup doesn't ask about the other [options](#configuration), such as read-only mode, toolsets or raw GraphQL; set them in `.mcp.json` by hand. Running "Connect to a store only" again keeps them; "Full theme design" sets the ones `CLAUDE.md` depends on. The secret is saved in plain text, so the file is added to `.gitignore` in a git repo and, on macOS and Linux, written readable only by you. Windows has no such file mode, so the file gets its folder's permissions: keep the project inside your user folder, where other users can't read it. Restart Claude Code (or run `/mcp`) to connect.
 
 ### Manual setup
 
@@ -43,7 +43,7 @@ claude mcp add shopify \
   -- npx -y @acodera/shopify-admin-mcp
 ```
 
-Or in `.mcp.json`, or the Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+Or in `.mcp.json`, or the Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
 
 ```json
 {

@@ -15,11 +15,12 @@ concurrency:
 
 jobs:
   test:
-    name: Lint, test, and build (Node ${{ matrix.node }})
-    runs-on: ubuntu-latest
+    name: Lint, test, and build (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         node: [22, 24]
     steps:
       - name: Check out repo

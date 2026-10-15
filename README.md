@@ -67,6 +67,7 @@ For a legacy token, set `SHOPIFY_ACCESS_TOKEN` instead of the client ID and secr
 ## Authentication
 
 - **Client credentials (recommended):** create an app in the [Dev Dashboard](https://dev.shopify.com/dashboard), configure the scopes below, release a version, install it on your store, and use its client ID and secret. The app and the store must belong to the same Shopify organization. Tokens last 24 hours and are refreshed automatically.
+- **Approved in the browser:** for an app installed on a store outside the app's organization, such as a client's store or one you reach as a collaborator, where Shopify refuses client credentials with `shop_not_permitted`. In setup, choose **Client ID and secret, approved in the browser**. It prints a redirect URL, `http://localhost:3457/auth/callback`, to add to the app's version in the Dev Dashboard (then release the version), opens Shopify's approval page, and exchanges the approval for an offline access token that lasts until the app is uninstalled or its secret is rotated. The client secret is only used for the approval; `.mcp.json` gets the access token.
 - **Legacy access token:** the `shpat_` token of an existing custom app.
 
 Grant only the scopes for the tools you use:

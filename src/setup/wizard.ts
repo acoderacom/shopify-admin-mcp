@@ -13,6 +13,7 @@ import {
 } from "./mcp-config.js";
 import { THEME_DIR, type DownloadResult, type HorizonVersion } from "./horizon.js";
 import type { NodeCheck } from "./node-version.js";
+import { REDIRECT_URI, type ApprovalInput, type ApprovalResult } from "./oauth.js";
 import {
   TEMPLATE_REPO,
   checkLiveTheme,
@@ -43,6 +44,9 @@ export interface WizardOptions {
   /** Saves an upload-ready zip of a Horizon version in the folder and returns its path. */
   saveHorizonZip: (horizon: HorizonVersion) => Promise<string>;
   writeProjectDocs: (input: ProjectDocsInput) => Promise<ProjectDocsResult>;
+  /** Waits for the user to approve the app in the browser and returns its access token; onUrl gets the approval page. */
+  approveInBrowser: (input: ApprovalInput, onUrl: (url: string) => void) => Promise<ApprovalResult>;
+  openInBrowser: (url: string) => void;
   /** Creates the theme folder for a live-site project, emptying it first when asked. */
   prepareThemeDir: (empty: boolean) => Promise<void>;
   /** Streams the prompts use instead of the terminal, for tests. */
@@ -57,6 +61,10 @@ const AUTH_LABELS: Record<AuthAnswers["mode"], string> = {
   "access-token": "Access token",
   "client-credentials": "Client ID and secret",
 };
+// The client credentials grant only works on stores in the app's own organization; elsewhere the
+// user approves the app in the browser and setup saves the access token that gives
+type AuthChoice = AuthAnswers["mode"] | "browser";
+const BROWSER_APPROVAL = "Client ID and secret, approved in the browser";
 
 class Cancelled extends Error {}
 // Ends setup without writing anything, after saying why
@@ -170,18 +178,76 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     return value.trim() || current;
   };
 
-  const askAuth = async (current: AuthAnswers | undefined): Promise<AuthAnswers> => {
-    const mode = await ask(
-      p.select<AuthAnswers["mode"]>({
+  // Set when the access token came from approving the app in the browser
+  let approvedInBrowser = false;
+
+  const askApproval = async (store: string): Promise<AuthAnswers> => {
+    p.note(
+      [
+        "For an app installed on a store outside the app's organization, where the client ID and secret alone are refused.",
+        "1. In the Dev Dashboard, add this redirect URL to the app's version, then release the version:",
+        `   ${REDIRECT_URI}`,
+        "2. Setup opens Shopify's approval page; approve the app there.",
+        `The client secret is only used for the approval and isn't saved: ${CONFIG_FILE} gets the access token.`,
+      ].join("\n"),
+      "Approve in the browser",
+      io
+    );
+    const clientId = (
+      await ask(
+        p.text({
+          ...io,
+          message: "Client ID",
+          initialValue: existing.clientId ?? "",
+          validate: (value) => (value?.trim() ? undefined : "Enter the client ID"),
+        })
+      )
+    ).trim();
+    const clientSecret = await askSecret("Client secret", existing.clientSecret ?? "");
+    const scopes = (
+      await ask(
+        p.text({
+          ...io,
+          message: "Access scopes to request, comma-separated (press Enter for the scopes on the app's version)",
+          placeholder: "read_themes,write_themes,read_products",
+        })
+      )
+    ) ?? "";
+    for (;;) {
+      if (!(await ask(p.confirm({ ...io, message: "Redirect URL added and the version released? Open the approval page", initialValue: true })))) {
+        throw new Cancelled();
+      }
+      try {
+        const result = await options.approveInBrowser({ store, clientId, clientSecret, scopes: scopes.trim() }, (url) => {
+          p.log.info(`Opening Shopify's approval page. If it doesn't open, go to:\n${url}`, io);
+          options.openInBrowser(url);
+          p.log.message("Waiting for the approval (up to 5 minutes)...", io);
+        });
+        approvedInBrowser = true;
+        p.log.success(`Approved. Scopes granted: ${result.scope || "none listed"}`, io);
+        return { mode: "access-token", accessToken: result.accessToken };
+      } catch (err) {
+        p.log.error(`Couldn't get the approval: ${errorMessage(err)}`, io);
+      }
+    }
+  };
+
+  const askAuth = async (store: string, current: AuthAnswers | undefined): Promise<AuthAnswers> => {
+    const choice = await ask(
+      p.select<AuthChoice>({
         ...io,
         message: "How does the app authenticate?",
-        initialValue: current?.mode ?? existing.authMode ?? "access-token",
+        initialValue: approvedInBrowser ? "browser" : (current?.mode ?? existing.authMode ?? "access-token"),
         options: [
           { value: "access-token", label: AUTH_LABELS["access-token"] },
           { value: "client-credentials", label: AUTH_LABELS["client-credentials"] },
+          { value: "browser", label: BROWSER_APPROVAL },
         ],
       })
     );
+    approvedInBrowser = false;
+    if (choice === "browser") return askApproval(store);
+    const mode = choice;
     if (mode === "access-token") {
       const known = current?.mode === "access-token" ? current.accessToken : (existing.accessToken ?? "");
       return { mode, accessToken: await askSecret("Admin API access token", known) };
@@ -410,7 +476,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
     const index = mode === "theme" ? await checkTemplate() : undefined;
 
     let store = await askStore(existing.store ?? "");
-    let auth = await askAuth(undefined);
+    let auth = await askAuth(store, undefined);
 
     let info: StoreInfo | undefined;
     for (;;) {
@@ -438,7 +504,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
       if (next === "continue") break;
       if (next === "cancel") throw new Cancelled();
       store = await askStore(store);
-      auth = await askAuth(auth);
+      auth = await askAuth(store, auth);
     }
 
     const project =
@@ -498,7 +564,7 @@ export async function runWizard(options: WizardOptions): Promise<SetupOutcome> {
         `File: ${file} (${existing.hasFile ? "update" : "new"})`,
         `Server: ${existing.serverName}`,
         `Store: ${store}`,
-        `Authentication: ${AUTH_LABELS[auth.mode]}`,
+        `Authentication: ${approvedInBrowser ? "Access token, from approving the app in the browser" : AUTH_LABELS[auth.mode]}`,
         `Shopify Dev MCP: ${devMcpChange}`,
         `Theme edits: ${mode === "connect" ? "off" : mode === "other" ? "files of the chosen copy only; themes locked" : "on, including the live theme"}`,
         // Connecting to a store only keeps other settings already in the file, minus live theme writes

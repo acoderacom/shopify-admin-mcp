@@ -3,6 +3,7 @@ import path from "node:path";
 import { THEME_DIR, downloadHorizon, saveHorizonZip } from "./horizon.js";
 import { describeExisting, readMcpConfig, saveSetup, type ExistingSetup } from "./mcp-config.js";
 import { checkAdminNode, checkDevMcpNode } from "./node-version.js";
+import { approveInBrowser, openInBrowser } from "./oauth.js";
 import { loadTemplateIndex, writeProjectDocs } from "./template.js";
 import { verifyCredentials } from "./verify.js";
 
@@ -43,6 +44,8 @@ export async function runSetup(cwd: string): Promise<number> {
     downloadHorizon: (horizon) => downloadHorizon(cwd, horizon),
     saveHorizonZip: (horizon) => saveHorizonZip(cwd, horizon),
     writeProjectDocs: (input) => writeProjectDocs(cwd, input),
+    approveInBrowser: (input, onUrl) => approveInBrowser(input, onUrl),
+    openInBrowser,
     prepareThemeDir: async (empty) => {
       const themeDir = path.join(cwd, THEME_DIR);
       if (empty) await rm(themeDir, { recursive: true, force: true });

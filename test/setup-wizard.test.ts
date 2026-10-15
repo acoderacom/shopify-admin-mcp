@@ -52,6 +52,11 @@ function setup(options: Partial<WizardOptions> = {}) {
   const writeProjectDocs = vi.fn<WizardOptions["writeProjectDocs"]>(async () => DOCS_CREATED);
   const saveHorizonZip = vi.fn<WizardOptions["saveHorizonZip"]>(async (horizon) => path.join(cwd, `horizon-${horizon.version}.zip`));
   const prepareThemeDir = vi.fn<WizardOptions["prepareThemeDir"]>(async () => {});
+  const approveInBrowser = vi.fn<WizardOptions["approveInBrowser"]>(async (input, onUrl) => {
+    onUrl(`https://${input.store}/admin/oauth/authorize?client_id=${input.clientId}`);
+    return { accessToken: "shpat_approved", scope: "read_themes,write_themes" };
+  });
+  const openInBrowser = vi.fn<WizardOptions["openInBrowser"]>();
 
   const input = new PassThrough();
   let written = "";
@@ -79,6 +84,8 @@ function setup(options: Partial<WizardOptions> = {}) {
     saveHorizonZip,
     writeProjectDocs,
     prepareThemeDir,
+    approveInBrowser,
+    openInBrowser,
     input,
     output,
     ...options,
@@ -111,7 +118,7 @@ function setup(options: Partial<WizardOptions> = {}) {
     }
   };
 
-  return { outcome, all, recent, waitFor, press, verify, save, downloadHorizon, saveHorizonZip, writeProjectDocs, prepareThemeDir };
+  return { outcome, all, recent, waitFor, press, verify, save, downloadHorizon, saveHorizonZip, writeProjectDocs, prepareThemeDir, approveInBrowser, openInBrowser };
 }
 
 type Wizard = ReturnType<typeof setup>;
@@ -291,6 +298,85 @@ describe("setup wizard", () => {
       advanced: { uploadDir: path.join(cwd, "uploads") },
       disableThemeWrites: true,
     });
+  });
+
+  it("gets an access token by approving the app in the browser, without saving the client secret", async () => {
+    const wizard = setup();
+    const { outcome, all, recent, waitFor, press, verify, save, approveInBrowser, openInBrowser } = wizard;
+
+    await waitFor(MODE_QUESTION);
+    await press(ENTER);
+    await waitFor("Store domain");
+    await press("mystore", ENTER);
+    await waitFor("How does the app authenticate?");
+    expect(recent()).toContain("Client ID and secret, approved in the browser");
+    await press(DOWN, DOWN, ENTER);
+    await waitFor("Client ID");
+    // The redirect URL to add to the app's version comes first
+    expect(all()).toContain("add this redirect URL to the app's version, then release the version:");
+    expect(all()).toContain("http://localhost:3457/auth/callback");
+    await press("client-id", ENTER);
+    await waitFor("Client secret");
+    await press("shpss_secret", ENTER);
+    await waitFor("Access scopes to request");
+    await press(ENTER);
+    await waitFor("Redirect URL added and the version released?");
+    await press(ENTER);
+    await waitFor("Also add the Shopify Dev MCP server?");
+
+    expect(approveInBrowser).toHaveBeenCalledWith(
+      { store: "mystore.myshopify.com", clientId: "client-id", clientSecret: "shpss_secret", scopes: "" },
+      expect.any(Function)
+    );
+    expect(openInBrowser).toHaveBeenCalledWith("https://mystore.myshopify.com/admin/oauth/authorize?client_id=client-id");
+    expect(all()).toContain("If it doesn't open, go to:");
+    expect(all()).toContain("Approved. Scopes granted: read_themes,write_themes");
+    // The token, not the secret, is checked and saved
+    expect(verify).toHaveBeenCalledWith("mystore.myshopify.com", { mode: "access-token", accessToken: "shpat_approved" });
+    await press("n");
+    await waitFor("Save .mcp.json?");
+    expect(all()).toContain("Authentication: Access token, from approving the app in the browser");
+    expect(all()).not.toContain("shpss_secret");
+    expect(all()).not.toContain("shpat_approved");
+    await press(ENTER);
+
+    await expect(outcome).resolves.toBe("saved");
+    expect(savedAnswers(save).auth).toEqual({ mode: "access-token", accessToken: "shpat_approved" });
+  });
+
+  it("offers the approval again after it fails", async () => {
+    const approveInBrowser = vi
+      .fn<WizardOptions["approveInBrowser"]>()
+      .mockRejectedValueOnce(new Error("No approval arrived within 5 minutes"))
+      .mockResolvedValueOnce({ accessToken: "shpat_approved", scope: "write_themes" });
+    const wizard = setup({ approveInBrowser });
+    const { outcome, waitFor, press } = wizard;
+
+    await waitFor(MODE_QUESTION);
+    await press(ENTER);
+    await waitFor("Store domain");
+    await press("mystore", ENTER);
+    await waitFor("How does the app authenticate?");
+    await press(DOWN, DOWN, ENTER);
+    await waitFor("Client ID");
+    await press("client-id", ENTER);
+    await waitFor("Client secret");
+    await press("shpss_secret", ENTER);
+    await waitFor("Access scopes to request");
+    await press("read_themes", ENTER);
+    await waitFor("Redirect URL added and the version released?");
+    await press(ENTER);
+    await waitFor("Couldn't get the approval: No approval arrived within 5 minutes");
+    await waitFor("Redirect URL added and the version released?");
+    await press(ENTER);
+    await waitFor("Also add the Shopify Dev MCP server?");
+    await press("n");
+    await waitFor("Save .mcp.json?");
+    await press(ENTER);
+
+    await expect(outcome).resolves.toBe("saved");
+    expect(approveInBrowser).toHaveBeenCalledTimes(2);
+    expect(approveInBrowser.mock.calls[0]![0].scopes).toBe("read_themes");
   });
 
   it("keeps the other settings and an upload folder already in the file, minus live theme writes", async () => {

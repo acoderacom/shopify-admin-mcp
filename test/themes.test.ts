@@ -267,6 +267,49 @@ describe("with theme edits disabled", () => {
   });
 });
 
+describe("with themes locked", () => {
+  it("leaves out the tools that duplicate and delete themes", async () => {
+    const { client } = await connect({ lockThemes: true });
+
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    expect(names).not.toContain("shopify_theme_duplicate");
+    expect(names).not.toContain("shopify_theme_delete");
+    expect(names).toContain("shopify_theme_files_upsert");
+  });
+
+  it("refuses creating, duplicating, renaming, deleting and publishing themes in raw GraphQL, without asking Shopify", async () => {
+    // Even with live theme writes allowed, the lock holds
+    const { client, fake } = await connect({ lockThemes: true, allowLiveThemeWrites: true });
+
+    for (const query of [
+      `mutation { themeCreate(source: "https://example.com/theme.zip", name: "Copy") { theme { id } } }`,
+      `mutation { themeDuplicate(id: "${THEME}") { newTheme { id } } }`,
+      `mutation { themeUpdate(id: "${THEME}", input: { name: "Renamed" }) { theme { id } } }`,
+      `mutation { themeDelete(id: "${THEME}") { deletedThemeId } }`,
+      `mutation Spread { ...Publish } fragment Publish on Mutation { themePublish(id: "${THEME}") { theme { id } } }`,
+    ]) {
+      const result = await callTool(client, "shopify_graphql", { query });
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain("themes are locked on this server (--lock-themes)");
+    }
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("still writes files to an unpublished theme and refuses them on the live one", async () => {
+    const upsert = (themeId: string) =>
+      `mutation { themeFilesUpsert(themeId: "${themeId}", files: [{ filename: "a.liquid", body: { type: TEXT, value: "x" } }]) { userErrors { message } } }`;
+    const { client, fake } = await connect({ lockThemes: true });
+    fake.responses.push(themeLookup("UNPUBLISHED"), { data: { themeFilesUpsert: { userErrors: [] } } }, themeLookup("MAIN"));
+
+    const copy = await callTool(client, "shopify_graphql", { query: upsert(THEME) });
+    const live = await callTool(client, "shopify_graphql", { query: upsert(THEME) });
+
+    expect(copy.isError, resultText(copy)).toBeFalsy();
+    expect(live.isError).toBe(true);
+    expect(resultText(live)).toContain("is the live theme");
+  });
+});
+
 describe("theme files and the local theme folder", () => {
   const NOTE = "{{ 'cx.note' | t }}\n";
   // Bytes that aren't UTF-8 text, as in an image

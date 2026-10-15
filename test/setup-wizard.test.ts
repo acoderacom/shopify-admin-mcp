@@ -12,6 +12,7 @@ import { runWizard, type WizardOptions } from "../src/setup/wizard.js";
 
 const ENTER = "\r";
 const DOWN = "\u001B[B";
+const UP = "\u001B[A";
 const ANSI = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 
 const ADMIN_NODE: NodeCheck = { label: "Shopify Admin MCP", range: ">=22.12.0", ok: true };
@@ -50,6 +51,7 @@ function setup(options: Partial<WizardOptions> = {}) {
   const downloadHorizon = vi.fn<WizardOptions["downloadHorizon"]>(async () => ({ dir: path.join(cwd, "theme"), files: 484 }));
   const writeProjectDocs = vi.fn<WizardOptions["writeProjectDocs"]>(async () => DOCS_CREATED);
   const saveHorizonZip = vi.fn<WizardOptions["saveHorizonZip"]>(async (horizon) => path.join(cwd, `horizon-${horizon.version}.zip`));
+  const prepareThemeDir = vi.fn<WizardOptions["prepareThemeDir"]>(async () => {});
 
   const input = new PassThrough();
   let written = "";
@@ -76,6 +78,7 @@ function setup(options: Partial<WizardOptions> = {}) {
     downloadHorizon,
     saveHorizonZip,
     writeProjectDocs,
+    prepareThemeDir,
     input,
     output,
     ...options,
@@ -108,7 +111,7 @@ function setup(options: Partial<WizardOptions> = {}) {
     }
   };
 
-  return { outcome, all, recent, waitFor, press, verify, save, downloadHorizon, saveHorizonZip, writeProjectDocs };
+  return { outcome, all, recent, waitFor, press, verify, save, downloadHorizon, saveHorizonZip, writeProjectDocs, prepareThemeDir };
 }
 
 type Wizard = ReturnType<typeof setup>;
@@ -135,7 +138,21 @@ async function quickPath(wizard: Wizard, token = "shpat_x") {
   await wizard.press("n");
 }
 
+// Full theme design with another theme (the default in a folder set up for one), then the store and access token
+async function toOther({ waitFor, press }: Wizard, { preselected = false, fromTheme = false } = {}) {
+  await waitFor(MODE_QUESTION);
+  await press(...(preselected ? [ENTER] : fromTheme ? [DOWN, ENTER] : [DOWN, DOWN, ENTER]));
+  await waitFor("Store domain");
+  await press("mystore", ENTER);
+  await waitFor("How does the app authenticate?");
+  await press(ENTER);
+  await waitFor("Admin API access token");
+  await press("shpat_x", ENTER);
+}
+
 // Full theme development (already the default in a folder with a theme), then the store and access token
+const waitForMode = ({ waitFor }: Wizard) => waitFor(MODE_QUESTION);
+
 async function toTheme({ waitFor, press }: Wizard, { preselected = false } = {}) {
   await waitFor(MODE_QUESTION);
   await press(...(preselected ? [ENTER] : [DOWN, ENTER]));
@@ -197,6 +214,7 @@ describe("setup wizard", () => {
         disableRawGraphql: false,
       },
       disableThemeWrites: true,
+      lockThemes: false,
     });
     expect(downloadHorizon).not.toHaveBeenCalled();
     expect(recent()).toContain("Added .mcp.json to .gitignore");
@@ -418,7 +436,7 @@ describe("setup wizard: Horizon project", () => {
     await waitFor("Save .mcp.json?");
     expect(recent()).toContain("so those are switched on");
     expect(all()).not.toContain("Also add the Shopify Dev MCP server?");
-    expect(all()).toContain("Mode: Full theme design");
+    expect(all()).toContain("Mode: Full theme design with Horizon");
     expect(all()).toContain("Theme edits: on, including the live theme");
     expect(all()).toContain("Horizon project: Horizon 4.2.0 in ./theme, with its THEME.md");
     expect(all()).toContain(
@@ -442,6 +460,7 @@ describe("setup wizard: Horizon project", () => {
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(downloadHorizon.mock.invocationCallOrder[0]!);
     expect(downloadHorizon).toHaveBeenCalledWith(HORIZON_420);
     expect(writeProjectDocs).toHaveBeenCalledWith({
+      kind: "horizon",
       replaceThemeMd: false,
       details: {
         store: "mystore.myshopify.com",
@@ -565,7 +584,7 @@ describe("setup wizard: Horizon project", () => {
 
     await waitFor(MODE_QUESTION);
     // A folder that already has a theme defaults to theme design
-    expect(all()).toContain("● Full theme design");
+    expect(all()).toContain("● Full theme design with Horizon");
     await toTheme(wizard, { preselected: true });
     await waitFor("Replace the files in ./theme and THEME.md with Horizon 4.2.0?");
     await press("y");
@@ -622,7 +641,7 @@ describe("setup wizard: Horizon project", () => {
     expect(save).toHaveBeenCalled();
     expect(writeProjectDocs).toHaveBeenCalled();
     expect(recent()).toContain("Couldn't download Horizon: GitHub returned 500");
-    expect(recent()).toContain(".mcp.json is saved. Run setup again to finish the Horizon project.");
+    expect(recent()).toContain(".mcp.json is saved. Run setup again to finish the theme project.");
   });
 
   it("stops theme design when ./theme is a file", async () => {
@@ -636,5 +655,232 @@ describe("setup wizard: Horizon project", () => {
     await expect(outcome).resolves.toBe("stopped");
     expect(all()).not.toContain("Store domain");
     expect(save).not.toHaveBeenCalled();
+  });
+  describe("editing a live site", () => {
+    const LIVE = { id: "gid://shopify/OnlineStoreTheme/222", name: "Dawn", themeName: "Dawn", version: "15.4.0", role: "MAIN" as const };
+    const COPY = { id: "gid://shopify/OnlineStoreTheme/333", name: "theme-copy-1", themeName: "Dawn", version: "15.4.0", role: "UNPUBLISHED" as const };
+    const LIVE_SITE_CLAUDE_MD = "- `THEME.md`: technical spec of this store's theme, written by Claude from the theme's own files.\n";
+    const HORIZON_CLAUDE_MD = "- `THEME.md`: technical spec of stock Horizon 4.2.0 for agents.\n";
+    const { role: _role, ...liveTheme } = LIVE;
+    const withThemes = (themes = [LIVE, COPY]) =>
+      vi.fn<WizardOptions["verify"]>(async () => ({ ...CONNECTED, passwordProtected: true, liveTheme, themes }));
+
+    // Picks the theme (Enter keeps the highlighted one), then skips the storefront password
+    async function pickTheme({ waitFor, press }: Wizard, keys: string[] = [ENTER]) {
+      await waitFor("Which theme will Claude edit?");
+      await press(...keys);
+      await waitFor("The storefront has a password");
+      await press(ENTER);
+      await waitFor("Save .mcp.json?");
+    }
+
+    it("lists the store's themes, edits only a copy, and locks themes, filling the copy in to the docs", async () => {
+      const loadTemplateIndex = vi.fn<WizardOptions["loadTemplateIndex"]>(async () => INDEX);
+      const wizard = setup({ verify: withThemes(), loadTemplateIndex });
+      const { outcome, all, recent, waitFor, press, save, downloadHorizon, writeProjectDocs, prepareThemeDir } = wizard;
+
+      await toOther(wizard);
+      await waitFor("Which theme will Claude edit?");
+      // The live theme is listed but can't be picked; the first copy is highlighted
+      expect(recent()).toContain("Dawn: Dawn 15.4.0, live theme, can't be edited here");
+      expect(recent()).toContain("● theme-copy-1: Dawn 15.4.0, unpublished");
+      // No Horizon template or version check
+      expect(loadTemplateIndex).not.toHaveBeenCalled();
+      expect(all()).not.toContain("Template: Horizon");
+      await press(ENTER);
+      await waitFor("The storefront has a password");
+      await press("123", ENTER);
+      await waitFor("Save .mcp.json?");
+      expect(all()).not.toContain("Also add the Shopify Dev MCP server?");
+      expect(all()).toContain('CLAUDE.md has Claude edit "theme-copy-1" from ./theme');
+      expect(all()).toContain("Live theme writes stay off and themes are locked");
+      expect(all()).toContain("Mode: Full theme edit live site");
+      expect(all()).toContain("Theme edits: files of the chosen copy only; themes locked");
+      expect(all()).toContain("Theme to edit: theme-copy-1: Dawn 15.4.0, unpublished, gid://shopify/OnlineStoreTheme/333");
+      expect(all()).toContain(`Settings: uploads from ${path.join(cwd, "uploads")}; theme files from ${path.join(cwd, "theme")}`);
+      expect(all()).not.toContain("Horizon project:");
+      await press(ENTER);
+
+      await expect(outcome).resolves.toBe("saved");
+      expect(savedAnswers(save)).toMatchObject({
+        includeDevMcp: true,
+        disableThemeWrites: false,
+        lockThemes: true,
+        advanced: {
+          readOnly: false,
+          allowLiveThemeWrites: false,
+          uploadDir: path.join(cwd, "uploads"),
+          themeDir: path.join(cwd, "theme"),
+          disableRawGraphql: false,
+        },
+      });
+      expect(downloadHorizon).not.toHaveBeenCalled();
+      expect(prepareThemeDir).toHaveBeenCalledWith(false);
+      expect(writeProjectDocs).toHaveBeenCalledWith({
+        kind: "other",
+        replaceThemeMd: false,
+        details: {
+          store: "mystore.myshopify.com",
+          horizonVersion: undefined,
+          // CLAUDE.md always says "live store" here
+          devStore: undefined,
+          liveTheme: undefined,
+          passwordProtected: true,
+          storefrontPassword: "123",
+          editTheme: { id: "gid://shopify/OnlineStoreTheme/333", name: "theme-copy-1", stock: "Dawn 15.4.0" },
+        },
+      });
+      expect(recent()).toContain("Ready: ./theme, for the theme you download");
+      expect(recent()).toContain("Project docs for the live site: CLAUDE.md created, THEME.md created, customizations.md created");
+      // Copying the theme in and learning it are left to the user
+      expect(recent()).toContain("Next, by hand");
+      expect(recent()).toContain('1. Copy the files of "theme-copy-1" into ./theme: Shopify admin → Online Store → Themes → ⋯ on that theme → Download theme file');
+      expect(recent()).toContain("2. When you want Claude to learn the theme, ask it to: it writes THEME.md from ./theme.");
+    });
+
+    it("can't pick the live theme: the cursor skips it", async () => {
+      const wizard = setup({ verify: withThemes([LIVE, COPY, { ...COPY, id: "gid://shopify/OnlineStoreTheme/444", name: "theme-copy-2" }]) });
+
+      await toOther(wizard);
+      // Up from the first copy wraps past the live theme to the last copy
+      await pickTheme(wizard, [UP, ENTER]);
+      await wizard.press(ENTER);
+      await expect(wizard.outcome).resolves.toBe("saved");
+      expect(wizard.writeProjectDocs.mock.calls[0]![0].details.editTheme?.name).toBe("theme-copy-2");
+    });
+
+    it("shows the ID of copies that share a name and version", async () => {
+      const twin = { ...COPY, id: "gid://shopify/OnlineStoreTheme/555" };
+      const wizard = setup({ verify: withThemes([LIVE, COPY, twin]) });
+
+      await toOther(wizard);
+      await wizard.waitFor("Which theme will Claude edit?");
+      expect(wizard.recent()).toContain("● theme-copy-1: Dawn 15.4.0, unpublished, ID 333");
+      expect(wizard.recent()).toContain("theme-copy-1: Dawn 15.4.0, unpublished, ID 555");
+    });
+
+    it("stops when the store has no copy, saying how to make one", async () => {
+      const wizard = setup({ verify: withThemes([LIVE]) });
+
+      await toOther(wizard);
+      await wizard.waitFor(
+        "The store has no unpublished theme for Claude to edit. Duplicate the live theme in the Shopify admin (Online Store → Themes → ⋯ → Duplicate), give the copy a name, then run setup again."
+      );
+      await expect(wizard.outcome).resolves.toBe("stopped");
+      expect(wizard.save).not.toHaveBeenCalled();
+    });
+
+    it("warns when the copy CLAUDE.md names has since been published", async () => {
+      await writeFile(path.join(cwd, "CLAUDE.md"), `${LIVE_SITE_CLAUDE_MD}- Theme to edit: theme-copy-1 (Dawn 15.4.0), ID ${COPY.id}\n`);
+      const published = { ...COPY, role: "MAIN" as const };
+      const other = { ...COPY, id: "gid://shopify/OnlineStoreTheme/444", name: "theme-copy-2" };
+      const wizard = setup({ verify: withThemes([published, other]) });
+
+      await toOther(wizard, { preselected: true });
+      await wizard.waitFor("Which theme will Claude edit?");
+      expect(wizard.all()).toContain('"theme-copy-1", the theme CLAUDE.md names, is now the live theme, so pick a copy to edit.');
+      expect(wizard.recent()).toContain("● theme-copy-2: Dawn 15.4.0, unpublished");
+    });
+
+    it("stops when the store's themes can't be read", async () => {
+      const verify = vi.fn<WizardOptions["verify"]>(async () => ({ ...CONNECTED, liveTheme: undefined, themesError: "Access denied" }));
+      const wizard = setup({ verify });
+
+      await toOther(wizard);
+      await wizard.waitFor("Couldn't list the store's themes (Access denied). The app needs the read_themes scope; then run setup again.");
+      await expect(wizard.outcome).resolves.toBe("stopped");
+      expect(wizard.save).not.toHaveBeenCalled();
+    });
+
+    it("keeps the theme files, THEME.md and the chosen theme when run again, unless asked to start over", async () => {
+      await writeFile(path.join(cwd, "CLAUDE.md"), `${LIVE_SITE_CLAUDE_MD}- Theme to edit: theme-copy-1 (Dawn 15.4.0), ID ${COPY.id}\n`);
+      await writeFile(path.join(cwd, "THEME.md"), "# Dawn spec");
+      await mkdir(path.join(cwd, "theme"));
+      await writeFile(path.join(cwd, "theme", "layout.liquid"), "x");
+
+      const kept = setup({ verify: withThemes() });
+      await kept.waitFor(MODE_QUESTION);
+      // A folder set up for a live site defaults to that mode
+      expect(kept.all()).toContain("● Full theme edit live site");
+      await toOther(kept, { preselected: true });
+      await kept.waitFor("Start over? ./theme is emptied and THEME.md starts blank");
+      await kept.press(ENTER);
+      await kept.waitFor("Which theme will Claude edit?");
+      // The theme CLAUDE.md names stays the default
+      expect(kept.recent()).toContain("● theme-copy-1: Dawn 15.4.0, unpublished");
+      await kept.press(ENTER);
+      await kept.waitFor("The storefront has a password");
+      await kept.press(ENTER);
+      await kept.waitFor("Save .mcp.json?");
+      expect(kept.all()).not.toContain("is emptied and THEME.md starts blank\n");
+      await kept.press(ENTER);
+      await expect(kept.outcome).resolves.toBe("saved");
+      expect(kept.prepareThemeDir).toHaveBeenCalledWith(false);
+      expect(kept.writeProjectDocs.mock.calls[0]![0]).toMatchObject({ kind: "other", replaceThemeMd: false });
+      expect(kept.recent()).toContain('1. ./theme already has files. If they aren\'t "theme-copy-1", empty it and copy that theme\'s files in again.');
+
+      const reset = setup({ verify: withThemes() });
+      await toOther(reset, { preselected: true });
+      await reset.waitFor("Start over?");
+      await reset.press("y");
+      await pickTheme(reset);
+      expect(reset.all()).toContain("; ./theme is emptied and THEME.md starts blank");
+      await reset.press(ENTER);
+      await expect(reset.outcome).resolves.toBe("saved");
+      expect(reset.prepareThemeDir).toHaveBeenCalledWith(true);
+      expect(reset.writeProjectDocs.mock.calls[0]![0]).toMatchObject({ kind: "other", replaceThemeMd: true });
+    });
+
+    it("switches a Horizon project over only when confirmed", async () => {
+      await writeFile(path.join(cwd, "CLAUDE.md"), HORIZON_CLAUDE_MD);
+      await writeFile(path.join(cwd, "THEME.md"), "Horizon spec");
+
+      // A folder with a THEME.md defaults to Horizon, one down from a live site
+      const declined = setup({ verify: withThemes() });
+      await toOther(declined, { fromTheme: true });
+      await declined.waitFor("This folder is set up for Horizon. Switch it to editing a live site?");
+      await declined.press(ENTER);
+      await expect(declined.outcome).resolves.toBe("cancelled");
+      expect(declined.save).not.toHaveBeenCalled();
+
+      const switched = setup({ verify: withThemes() });
+      await toOther(switched, { fromTheme: true });
+      await switched.waitFor("Switch it to editing a live site?");
+      await switched.press("y");
+      await pickTheme(switched);
+      await switched.press(ENTER);
+      await expect(switched.outcome).resolves.toBe("saved");
+      expect(switched.prepareThemeDir).toHaveBeenCalledWith(true);
+      expect(switched.writeProjectDocs.mock.calls[0]![0]).toMatchObject({ kind: "other", replaceThemeMd: true });
+    });
+
+    it("lists a CLAUDE.md written for a live site among the files Horizon replaces", async () => {
+      await writeFile(path.join(cwd, "CLAUDE.md"), LIVE_SITE_CLAUDE_MD);
+      await writeFile(path.join(cwd, "THEME.md"), "# Dawn spec");
+      const wizard = setup();
+
+      await waitForMode(wizard);
+      // From a live site, the default here, up to Horizon
+      await wizard.press(UP, ENTER);
+      await wizard.waitFor("Store domain");
+      await wizard.press("mystore", ENTER);
+      await wizard.waitFor("How does the app authenticate?");
+      await wizard.press(ENTER);
+      await wizard.waitFor("Admin API access token");
+      await wizard.press("shpat_x", ENTER);
+      await wizard.waitFor("Replace THEME.md and CLAUDE.md with Horizon 4.2.0?");
+      await wizard.press(ENTER);
+      await expect(wizard.outcome).resolves.toBe("cancelled");
+    });
+
+    it("stops when ./theme is a file", async () => {
+      await writeFile(path.join(cwd, "theme"), "");
+      const wizard = setup({ verify: withThemes() });
+
+      await toOther(wizard);
+      await wizard.waitFor("is a file, so setup can't make the theme folder there. Move it, then run setup again.");
+      await expect(wizard.outcome).resolves.toBe("stopped");
+      expect(wizard.save).not.toHaveBeenCalled();
+    });
   });
 });

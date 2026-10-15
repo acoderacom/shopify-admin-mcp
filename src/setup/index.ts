@@ -1,4 +1,6 @@
-import { downloadHorizon, saveHorizonZip } from "./horizon.js";
+import { mkdir, rm } from "node:fs/promises";
+import path from "node:path";
+import { THEME_DIR, downloadHorizon, saveHorizonZip } from "./horizon.js";
 import { describeExisting, readMcpConfig, saveSetup, type ExistingSetup } from "./mcp-config.js";
 import { checkAdminNode, checkDevMcpNode } from "./node-version.js";
 import { loadTemplateIndex, writeProjectDocs } from "./template.js";
@@ -41,6 +43,11 @@ export async function runSetup(cwd: string): Promise<number> {
     downloadHorizon: (horizon) => downloadHorizon(cwd, horizon),
     saveHorizonZip: (horizon) => saveHorizonZip(cwd, horizon),
     writeProjectDocs: (input) => writeProjectDocs(cwd, input),
+    prepareThemeDir: async (empty) => {
+      const themeDir = path.join(cwd, THEME_DIR);
+      if (empty) await rm(themeDir, { recursive: true, force: true });
+      await mkdir(themeDir, { recursive: true });
+    },
   });
   return outcome === "saved" ? 0 : 1;
 }

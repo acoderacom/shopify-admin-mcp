@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { GraphQLClient } from "../graphql/client.js";
 import type { ServerOptions } from "../server.js";
 import { DESTRUCTIVE, READ_ONLY, toolResult, type ToolRegistrar } from "./shared.js";
-import { rawLiveThemeGuard, rawThemeWriteGuard } from "./theme-guard.js";
+import { rawLiveThemeGuard, rawThemeLockGuard, rawThemeWriteGuard } from "./theme-guard.js";
 
 function errorResult(message: string) {
   return {
@@ -33,9 +33,12 @@ function toolDescription(options: ServerOptions): string {
   const base =
     "Execute a raw GraphQL query or mutation against the Shopify Admin API. Use shopify_schema_search to discover available queries, mutations, and types first.";
   if (options.disableThemeWrites) return `${base} Theme mutations are refused because theme edits are disabled.`;
+  const lock = options.lockThemes
+    ? " Themes are locked, so creating, duplicating, renaming, deleting and publishing themes is refused."
+    : "";
   return options.allowLiveThemeWrites
-    ? base
-    : `${base} Theme file writes to the live theme and themePublish are refused unless the server allows live theme writes.`;
+    ? `${base}${lock}`
+    : `${base} Theme file writes to the live theme and themePublish are refused unless the server allows live theme writes.${lock}`;
 }
 
 export function registerGraphQLProxy(
@@ -69,9 +72,11 @@ export function registerGraphQLProxy(
         } else if (options.disableThemeWrites) {
           const blocked = rawThemeWriteGuard(document);
           if (blocked) return errorResult(blocked);
-        } else if (!options.allowLiveThemeWrites) {
-          // The theme tools' live-theme guard would mean little if raw GraphQL could skip it
-          const blocked = await rawLiveThemeGuard(client, document, variables);
+        } else {
+          // The theme tools' guards would mean little if raw GraphQL could skip them
+          const blocked =
+            (options.lockThemes ? rawThemeLockGuard(document) : null) ??
+            (options.allowLiveThemeWrites ? null : await rawLiveThemeGuard(client, document, variables));
           if (blocked) return errorResult(blocked);
         }
         return toolResult(await client.execute(query, variables));

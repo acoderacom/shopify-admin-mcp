@@ -23,7 +23,7 @@ import { registerMarketTools } from "./tools/markets.js";
 const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
 
 export type ServerOptions = Pick<Config, "readOnly"> &
-  Partial<Pick<Config, "toolsets" | "uploadDir" | "themeDir" | "allowLiveThemeWrites" | "disableThemeWrites" | "disableRawGraphql">>;
+  Partial<Pick<Config, "toolsets" | "uploadDir" | "themeDir" | "allowLiveThemeWrites" | "disableThemeWrites" | "lockThemes" | "disableRawGraphql">>;
 
 type RegisterToolset = (
   server: ToolRegistrar,
@@ -59,6 +59,8 @@ function instructions(options: ServerOptions): string {
   );
   if (options.disableThemeWrites && !options.readOnly) {
     lines.push("Theme edits are disabled: themes and their files can be read but not changed, published, created or deleted.");
+  } else if (options.lockThemes && !options.readOnly) {
+    lines.push("Themes are locked: theme files can be edited, but themes can't be created, duplicated, renamed, deleted or published. The user does that in the Shopify admin.");
   }
   const themeTools = !options.toolsets || options.toolsets.includes("themes");
   if (options.themeDir && themeTools && !options.readOnly) {

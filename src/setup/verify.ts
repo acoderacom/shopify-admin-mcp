@@ -11,13 +11,22 @@ export interface LiveTheme {
   version?: string;
 }
 
+/** A theme Claude can edit: the live one, or one that isn't published. */
+export interface StoreTheme extends LiveTheme {
+  role: "MAIN" | "UNPUBLISHED" | "DEVELOPMENT";
+}
+
 export interface StoreInfo {
   shopName: string;
   devStore?: boolean;
   passwordProtected?: boolean;
   liveTheme?: LiveTheme;
+  /** Every theme Claude can edit, the live one first; undefined when they couldn't be read. */
+  themes?: StoreTheme[];
   /** Why the live theme couldn't be read, such as a missing read_themes scope. */
   liveThemeError?: string;
+  /** Why the themes couldn't be read. */
+  themesError?: string;
 }
 
 export type VerifyResult = ({ ok: true } & StoreInfo) | { ok: false; message: string };
@@ -26,10 +35,11 @@ export type VerifyResult = ({ ok: true } & StoreInfo) | { ok: false; message: st
 const DETAILS_QUERY = `{
   shop { plan { partnerDevelopment } }
   onlineStore { passwordProtection { enabled } }
-  themes(first: 1, roles: [MAIN]) {
+  themes(first: 50, roles: [MAIN, UNPUBLISHED, DEVELOPMENT]) {
     nodes {
       id
       name
+      role
       files(filenames: ["config/settings_schema.json"], first: 1) {
         nodes { body { ... on OnlineStoreThemeFileBodyText { content } } }
       }
@@ -41,7 +51,12 @@ interface Details {
   shop?: { plan?: { partnerDevelopment?: boolean } } | null;
   onlineStore?: { passwordProtection?: { enabled?: boolean } } | null;
   themes?: {
-    nodes: Array<{ id: string; name: string; files?: { nodes: Array<{ body?: { content?: string } }> } | null }>;
+    nodes: Array<{
+      id: string;
+      name: string;
+      role: StoreTheme["role"];
+      files?: { nodes: Array<{ body?: { content?: string } }> } | null;
+    }>;
   } | null;
 }
 
@@ -62,6 +77,7 @@ export async function verifyCredentials(store: string, auth: AuthAnswers): Promi
     readOnly: true,
     allowLiveThemeWrites: false,
     disableThemeWrites: true,
+    lockThemes: true,
     disableRawGraphql: false,
     auth:
       auth.mode === "access-token"
@@ -86,22 +102,33 @@ export async function verifyCredentials(store: string, auth: AuthAnswers): Promi
     const data = (res.data ?? {}) as Details;
     info.devStore = data.shop?.plan?.partnerDevelopment;
     info.passwordProtected = data.onlineStore?.passwordProtection?.enabled;
-    const theme = data.themes?.nodes[0];
-    if (theme) {
-      const schema = theme.files?.nodes[0]?.body?.content;
-      info.liveTheme = {
-        id: theme.id,
-        name: theme.name,
-        themeName: themeInfo(schema, "theme_name"),
-        version: themeInfo(schema, "theme_version"),
-      };
+    if (data.themes) {
+      info.themes = data.themes.nodes
+        .map((node): StoreTheme => {
+          const schema = node.files?.nodes[0]?.body?.content;
+          return {
+            id: node.id,
+            name: node.name,
+            role: node.role,
+            themeName: themeInfo(schema, "theme_name"),
+            version: themeInfo(schema, "theme_version"),
+          };
+        })
+        .sort((a, b) => Number(b.role === "MAIN") - Number(a.role === "MAIN"));
+    }
+    const live = info.themes?.find((theme) => theme.role === "MAIN");
+    if (live) {
+      const { role: _role, ...liveTheme } = live;
+      info.liveTheme = liveTheme;
     } else {
       info.liveThemeError =
         (res.errors?.find((e) => e.path?.[0] === "themes") ?? res.errors?.[0])?.message ??
         (data.themes ? "the store has no live theme" : "Shopify didn't return it");
+      if (!data.themes) info.themesError = info.liveThemeError;
     }
   } catch (err) {
     info.liveThemeError = err instanceof Error ? err.message : String(err);
+    info.themesError = info.liveThemeError;
   }
   return { ok: true, ...info };
 }

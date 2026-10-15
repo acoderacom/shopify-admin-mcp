@@ -42,6 +42,7 @@ describe("parseArgs", () => {
       readOnly: false,
       allowLiveThemeWrites: false,
       disableThemeWrites: false,
+      lockThemes: false,
       disableRawGraphql: false,
       auth: { mode: "access-token", accessToken: "shpat_x" },
     });
@@ -88,6 +89,7 @@ describe("parseArgs", () => {
       readOnly: true,
       allowLiveThemeWrites: false,
       disableThemeWrites: false,
+      lockThemes: false,
       disableRawGraphql: false,
       auth: { mode: "client-credentials", clientId: "id", clientSecret: "secret" },
     });
@@ -147,6 +149,13 @@ describe("parseArgs", () => {
     expect(parse("--store", "s", "--access-token", "t", "--disable-theme-writes").disableThemeWrites).toBe(true);
     vi.stubEnv("SHOPIFY_DISABLE_THEME_WRITES", "true");
     expect(parse("--store", "s", "--access-token", "t").disableThemeWrites).toBe(true);
+  });
+
+  it("locks themes with --lock-themes or SHOPIFY_LOCK_THEMES", () => {
+    expect(parse("--store", "s", "--access-token", "t").lockThemes).toBe(false);
+    expect(parse("--store", "s", "--access-token", "t", "--lock-themes").lockThemes).toBe(true);
+    vi.stubEnv("SHOPIFY_LOCK_THEMES", "true");
+    expect(parse("--store", "s", "--access-token", "t").lockThemes).toBe(true);
   });
 
   it("rejects unknown toolsets", () => {

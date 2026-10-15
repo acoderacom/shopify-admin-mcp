@@ -1,5 +1,11 @@
 # @acodera/shopify-admin-mcp
 
+## 1.11.0
+
+### Minor Changes
+
+- [#39](https://github.com/acoderacom/shopify-admin-mcp/pull/39) [`cf39a79`](https://github.com/acoderacom/shopify-admin-mcp/commit/cf39a79104a5ee4c72e4445a0e2c7ba406169812) Thanks [@acoderacom](https://github.com/acoderacom)! - Setup can now get an access token for an app installed on a store outside the app's organization, where Shopify refuses client credentials with `shop_not_permitted`: choose **Client ID and secret, approved in the browser**. Setup prints the redirect URL to add to the app's version (`http://localhost:3457/auth/callback`), opens Shopify's approval page, checks the callback's shop, state and HMAC on a loopback-only local server, and exchanges the code for an offline access token, which it saves as access-token auth. The client secret is only used for the approval and isn't saved.
+
 ## 1.10.0
 
 ### Minor Changes

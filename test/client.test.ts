@@ -9,6 +9,7 @@ const tokenConfig: Config = {
   readOnly: false,
   allowLiveThemeWrites: false,
   disableThemeWrites: false,
+  lockThemes: false,
   disableRawGraphql: false,
   auth: { mode: "access-token", accessToken: "shpat_test" },
 };

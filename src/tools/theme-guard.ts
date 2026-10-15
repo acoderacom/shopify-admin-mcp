@@ -76,6 +76,20 @@ export function rawThemeWriteGuard(document: DocumentNode): string | null {
     : null;
 }
 
+// The mutations that create, change or remove whole themes, rather than their files
+const THEME_MANAGEMENT_MUTATIONS = ["themeCreate", "themeDuplicate", "themeUpdate", "themeDelete", "themePublish"];
+
+/**
+ * With themes locked, refuses the mutations that create, duplicate, rename, delete or publish a
+ * theme, while theme file writes go on to the live-theme guard. Returns the reason, or null.
+ */
+export function rawThemeLockGuard(document: DocumentNode): string | null {
+  const field = mutationRootFields(document).find((candidate) => THEME_MANAGEMENT_MUTATIONS.includes(candidate.name.value));
+  return field
+    ? `${field.name.value} is refused because themes are locked on this server (--lock-themes). Create, duplicate, rename, delete and publish themes in the Shopify admin.`
+    : null;
+}
+
 // Root fields of every mutation in the document, including those selected through fragments
 function mutationRootFields(document: DocumentNode): FieldNode[] {
   const fragments = new Map<string, FragmentDefinitionNode>();

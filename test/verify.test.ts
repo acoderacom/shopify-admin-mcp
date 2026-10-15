@@ -18,14 +18,16 @@ afterEach(() => {
 });
 
 describe("verifyCredentials", () => {
-  it("reads the store type, the storefront password setting and the live theme", async () => {
+  it("reads the store type, the storefront password setting, and the themes with the live one first", async () => {
     stubShopify({
       data: {
         shop: { plan: { partnerDevelopment: true } },
         onlineStore: { passwordProtection: { enabled: true } },
         themes: {
           nodes: [
-            { id: "gid://shopify/OnlineStoreTheme/111", name: "Horizon", files: { nodes: [{ body: { content: SCHEMA } }] } },
+            { id: "gid://shopify/OnlineStoreTheme/333", name: "theme-copy-1", role: "UNPUBLISHED", files: { nodes: [{ body: { content: SCHEMA } }] } },
+            { id: "gid://shopify/OnlineStoreTheme/111", name: "Horizon", role: "MAIN", files: { nodes: [{ body: { content: SCHEMA } }] } },
+            { id: "gid://shopify/OnlineStoreTheme/444", name: "Bare", role: "DEVELOPMENT", files: { nodes: [] } },
           ],
         },
       },
@@ -37,6 +39,11 @@ describe("verifyCredentials", () => {
       devStore: true,
       passwordProtected: true,
       liveTheme: { id: "gid://shopify/OnlineStoreTheme/111", name: "Horizon", themeName: "Horizon", version: "4.2.0" },
+      themes: [
+        { id: "gid://shopify/OnlineStoreTheme/111", name: "Horizon", role: "MAIN", themeName: "Horizon", version: "4.2.0" },
+        { id: "gid://shopify/OnlineStoreTheme/333", name: "theme-copy-1", role: "UNPUBLISHED", themeName: "Horizon", version: "4.2.0" },
+        { id: "gid://shopify/OnlineStoreTheme/444", name: "Bare", role: "DEVELOPMENT", themeName: undefined, version: undefined },
+      ],
     });
   });
 
@@ -49,6 +56,7 @@ describe("verifyCredentials", () => {
     const result = await verifyCredentials("mystore.myshopify.com", AUTH);
     expect(result).toMatchObject({ ok: true, shopName: "My Store", devStore: false, passwordProtected: undefined });
     expect(result.ok && result.liveThemeError).toContain("read_themes");
+    expect(result.ok && result.themesError).toContain("read_themes");
   });
 
   it("fails when the credentials are rejected", async () => {

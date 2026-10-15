@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   checkLiveTheme,
+  claudeMdKind,
   fillTemplate,
   loadTemplateIndex,
   parseTemplateIndex,
@@ -29,6 +30,18 @@ const TEMPLATE = `# Project
 
 ## How to edit
 2. The live \`config/settings_schema.json\` must report \`theme_version\` ${VERSION}, the version \`THEME.md\` covers.
+`;
+
+// The store and THEME.md lines of the template's live-site/CLAUDE.md
+const OTHER_TEMPLATE = `# Project
+
+## Store
+- Store: [agent: insert the store's myshopify.com domain] (live store)
+- Theme to edit: [agent: insert the theme's name and version], ID [agent: insert the theme's ID, gid://shopify/OnlineStoreTheme/…]
+- Storefront password (visitor gate on development and password-protected stores): [agent: insert the password in backticks, or delete this line if the storefront has none]. The user enters it.
+
+## Files in this folder
+- \`THEME.md\`: technical spec of this store's theme, written by Claude from the theme's own files.
 `;
 
 const DETAILS: ProjectDetails = {
@@ -196,7 +209,7 @@ describe("writeProjectDocs", () => {
   it("writes the shared docs and the version's THEME.md, with the placeholders filled in", async () => {
     const fetchMock = serveTemplate(TEMPLATE_FILES);
 
-    await expect(writeProjectDocs(dir, { replaceThemeMd: false, details: DETAILS })).resolves.toEqual({
+    await expect(writeProjectDocs(dir, { kind: "horizon", replaceThemeMd: false, details: DETAILS })).resolves.toEqual({
       files: [
         { name: "CLAUDE.md", action: "created" },
         { name: "THEME.md", action: "created" },
@@ -220,6 +233,7 @@ describe("writeProjectDocs", () => {
     await writeFile(path.join(dir, "customizations.md"), "my changes");
 
     const kept = await writeProjectDocs(dir, {
+      kind: "horizon",
       replaceThemeMd: false,
       details: { store: "mystore.myshopify.com", horizonVersion: "4.2.0" },
     });
@@ -229,7 +243,7 @@ describe("writeProjectDocs", () => {
     ]);
     expect(kept.placeholdersLeft).toBe(true);
 
-    const replaced = await writeProjectDocs(dir, { replaceThemeMd: true, details: DETAILS });
+    const replaced = await writeProjectDocs(dir, { kind: "horizon", replaceThemeMd: true, details: DETAILS });
     expect(replaced.files).toEqual([
       { name: "CLAUDE.md", action: "updated" },
       { name: "THEME.md", action: "replaced" },
@@ -239,10 +253,93 @@ describe("writeProjectDocs", () => {
     expect(await readFile(path.join(dir, "customizations.md"), "utf8")).toBe("my changes");
   });
 
+  const OTHER_FILES = {
+    "live-site/CLAUDE.md": OTHER_TEMPLATE,
+    "live-site/customizations.md": "# Changes from the stock [agent: insert the theme's name and version]\n",
+  };
+  const COPY = { id: "gid://shopify/OnlineStoreTheme/333", name: "theme-copy-1", stock: "Dawn 15.4.0" };
+  const OTHER_DETAILS: ProjectDetails = { store: "mystore.myshopify.com", passwordProtected: false, editTheme: COPY };
+
+  it("writes a live site's docs with the chosen theme filled in and a blank THEME.md", async () => {
+    const fetchMock = serveTemplate(OTHER_FILES);
+
+    await expect(writeProjectDocs(dir, { kind: "other", replaceThemeMd: false, details: OTHER_DETAILS })).resolves.toEqual({
+      files: [
+        { name: "CLAUDE.md", action: "created" },
+        { name: "THEME.md", action: "created" },
+        { name: "customizations.md", action: "created" },
+      ],
+      placeholdersLeft: false,
+    });
+    expect(fetchMock.mock.calls.map(([url]) => String(url).split("/main/")[1])).toEqual([
+      "live-site/CLAUDE.md",
+      "live-site/customizations.md",
+    ]);
+    const claude = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+    expect(claude).toContain("- Store: mystore.myshopify.com (live store)");
+    expect(claude).toContain("- Theme to edit: theme-copy-1 (Dawn 15.4.0), ID gid://shopify/OnlineStoreTheme/333\n");
+    expect(claude).not.toContain("Storefront password");
+    expect(await readFile(path.join(dir, "THEME.md"), "utf8")).toBe("");
+    expect(await readFile(path.join(dir, "customizations.md"), "utf8")).toBe("# Changes from the stock Dawn 15.4.0\n");
+  });
+
+  it("keeps a live site's store line as a live store, even for a development store", async () => {
+    serveTemplate(OTHER_FILES);
+    await writeProjectDocs(dir, { kind: "other", replaceThemeMd: false, details: { ...OTHER_DETAILS, devStore: true } });
+
+    expect(await readFile(path.join(dir, "CLAUDE.md"), "utf8")).toContain("- Store: mystore.myshopify.com (live store)");
+  });
+
+  it("leaves the stock theme for Claude when setup couldn't read it", async () => {
+    serveTemplate(OTHER_FILES);
+    await writeProjectDocs(dir, { kind: "other", replaceThemeMd: false, details: { ...OTHER_DETAILS, editTheme: { ...COPY, stock: undefined } } });
+
+    expect(await readFile(path.join(dir, "CLAUDE.md"), "utf8")).toContain("- Theme to edit: theme-copy-1, ID gid://shopify/OnlineStoreTheme/333\n");
+    expect(await readFile(path.join(dir, "customizations.md"), "utf8")).toContain("[agent: insert the theme's name and version]");
+  });
+
+  it("keeps the THEME.md Claude wrote, updates the theme lines when run again, and blanks THEME.md only when asked", async () => {
+    serveTemplate(OTHER_FILES);
+    await writeFile(path.join(dir, "CLAUDE.md"), `${fillTemplate(OTHER_TEMPLATE, OTHER_DETAILS)}- My own rule\n`);
+    await writeFile(path.join(dir, "THEME.md"), "# Dawn 15.4.0 spec");
+
+    const kept = await writeProjectDocs(dir, { kind: "other", replaceThemeMd: false, details: OTHER_DETAILS });
+    expect(kept.files.slice(0, 2)).toEqual([
+      { name: "CLAUDE.md", action: "unchanged" },
+      { name: "THEME.md", action: "kept" },
+    ]);
+
+    // Picking another copy updates the line, keeping the rest
+    const other = { id: "gid://shopify/OnlineStoreTheme/444", name: "theme-copy-2", stock: "Dawn 15.4.0" };
+    const switched = await writeProjectDocs(dir, { kind: "other", replaceThemeMd: false, details: { ...OTHER_DETAILS, editTheme: other } });
+    expect(switched.files[0]).toEqual({ name: "CLAUDE.md", action: "updated" });
+    const claude = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+    expect(claude).toContain("- Theme to edit: theme-copy-2 (Dawn 15.4.0), ID gid://shopify/OnlineStoreTheme/444\n");
+    expect(claude).toContain("- Store: mystore.myshopify.com (live store)");
+    expect(claude).toContain("- My own rule");
+
+    const blanked = await writeProjectDocs(dir, { kind: "other", replaceThemeMd: true, details: OTHER_DETAILS });
+    expect(blanked.files[1]).toEqual({ name: "THEME.md", action: "replaced" });
+    expect(await readFile(path.join(dir, "THEME.md"), "utf8")).toBe("");
+  });
+
+  it("replaces a CLAUDE.md written for the other kind of theme", async () => {
+    serveTemplate({ ...TEMPLATE_FILES, ...OTHER_FILES });
+    await writeFile(path.join(dir, "CLAUDE.md"), fillTemplate(TEMPLATE, DETAILS));
+
+    const toOther = await writeProjectDocs(dir, { kind: "other", replaceThemeMd: true, details: OTHER_DETAILS });
+    expect(toOther.files[0]).toEqual({ name: "CLAUDE.md", action: "replaced" });
+    expect(claudeMdKind(await readFile(path.join(dir, "CLAUDE.md"), "utf8"))).toBe("other");
+
+    const toHorizon = await writeProjectDocs(dir, { kind: "horizon", replaceThemeMd: true, details: DETAILS });
+    expect(toHorizon.files[0]).toEqual({ name: "CLAUDE.md", action: "replaced" });
+    expect(claudeMdKind(await readFile(path.join(dir, "CLAUDE.md"), "utf8"))).toBe("horizon");
+  });
+
   it("writes nothing when a template file is missing", async () => {
     serveTemplate({ "CLAUDE.md": TEMPLATE, "customizations.md": "log" });
 
-    await expect(writeProjectDocs(dir, { replaceThemeMd: false, details: DETAILS })).rejects.toThrow("GitHub returned 404");
+    await expect(writeProjectDocs(dir, { kind: "horizon", replaceThemeMd: false, details: DETAILS })).rejects.toThrow("GitHub returned 404");
     await expect(readFile(path.join(dir, "CLAUDE.md"))).rejects.toThrow("ENOENT");
   });
 });

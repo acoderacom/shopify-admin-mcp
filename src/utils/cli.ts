@@ -30,6 +30,8 @@ export interface Config {
   allowLiveThemeWrites: boolean;
   /** Refuses every theme change, published or not, through the theme tools and raw GraphQL. */
   disableThemeWrites: boolean;
+  /** Keeps theme file edits but refuses creating, duplicating, renaming, deleting and publishing themes. */
+  lockThemes: boolean;
   /** Leaves out shopify_graphql so the selected toolsets are the only way to reach the store. */
   disableRawGraphql: boolean;
   auth:
@@ -150,6 +152,7 @@ export function parseArgs(argv: string[]): Config {
       "SHOPIFY_ALLOW_LIVE_THEME_WRITES"
     ),
     disableThemeWrites: getFlag(argv, "--disable-theme-writes", "SHOPIFY_DISABLE_THEME_WRITES"),
+    lockThemes: getFlag(argv, "--lock-themes", "SHOPIFY_LOCK_THEMES"),
     disableRawGraphql: getFlag(argv, "--disable-raw-graphql", "SHOPIFY_DISABLE_RAW_GRAPHQL"),
   };
 

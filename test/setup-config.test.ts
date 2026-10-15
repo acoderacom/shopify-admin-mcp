@@ -236,6 +236,24 @@ describe("applyAnswers", () => {
     expect(entry.env).toMatchObject({ SHOPIFY_ALLOW_LIVE_THEME_WRITES: "false", SHOPIFY_DISABLE_THEME_WRITES: "true" });
   });
 
+  it("locks themes when asked, and unlocks them otherwise, dropping the flag from args", () => {
+    const config = {
+      mcpServers: {
+        "shopify-admin-mcp": {
+          command: "npx",
+          args: ["-y", "@acodera/shopify-admin-mcp@latest", "--lock-themes"],
+          env: { SHOPIFY_STORE: "mystore.myshopify.com", SHOPIFY_ACCESS_TOKEN: "shpat_old" },
+        },
+      },
+    };
+    const locked = applyAnswers(config, { ...answers, lockThemes: true }).mcpServers!["shopify-admin-mcp"]!;
+    expect(locked.args).toEqual(["-y", "@acodera/shopify-admin-mcp@latest"]);
+    expect(locked.env).toMatchObject({ SHOPIFY_LOCK_THEMES: "true" });
+
+    const unlocked = applyAnswers({ mcpServers: { "shopify-admin-mcp": locked } }, answers).mcpServers!["shopify-admin-mcp"]!;
+    expect(unlocked.env).toMatchObject({ SHOPIFY_LOCK_THEMES: "false" });
+  });
+
   it("moves a --theme-dir flag into env, so the env value isn't overridden", () => {
     const config = {
       mcpServers: {

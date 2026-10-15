@@ -5,9 +5,10 @@ import { githubRaw } from "./github.js";
 import type { HorizonVersion } from "./horizon.js";
 
 /**
- * The repository with the project docs that go next to a Horizon theme: shared CLAUDE.md and
- * customizations.md, one versions/<version>/THEME.md per Horizon version, and versions.json saying
- * which versions stores may run.
+ * The repository with the project docs: for Horizon, CLAUDE.md and customizations.md, one
+ * versions/<version>/THEME.md per Horizon version, and versions.json saying which versions stores
+ * may run; for editing any theme on a live site, live-site/CLAUDE.md and live-site/customizations.md,
+ * with a blank THEME.md that Claude writes from the theme.
  */
 export const TEMPLATE_REPO = "acoderacom/claude-horizon";
 const TEMPLATE_REF = "main";
@@ -22,21 +23,32 @@ export interface TemplateIndex {
   supported: HorizonVersion[];
 }
 
+/** Horizon, with its spec from the template, or any other theme, whose THEME.md Claude writes. */
+export type ProjectKind = "horizon" | "other";
+
 /** What setup knows about the store and project, for the placeholders in CLAUDE.md and customizations.md. */
 export interface ProjectDetails {
   store: string;
-  /** The project's Horizon version, which THEME.md covers. */
-  horizonVersion: string;
+  /** The project's Horizon version, which THEME.md covers; none for another theme. */
+  horizonVersion?: string;
   devStore?: boolean;
   /** The live theme, when it's Horizon. */
   liveTheme?: { id: string; version?: string };
+  /** The unpublished copy a live-site project edits. */
+  editTheme?: {
+    id: string;
+    name: string;
+    /** Its theme_info name and version, such as "Dawn 15.4.0", when it has them. */
+    stock?: string;
+  };
   /** Undefined when setup couldn't tell. */
   passwordProtected?: boolean;
   storefrontPassword?: string;
 }
 
 export interface ProjectDocsInput {
-  /** Replace an existing THEME.md, since it describes the theme being replaced. */
+  kind: ProjectKind;
+  /** Replace an existing THEME.md, since it describes the theme being replaced: with the version's spec for Horizon, with a blank file for another theme. */
   replaceThemeMd: boolean;
   details: ProjectDetails;
 }
@@ -126,6 +138,7 @@ const PLACEHOLDER = {
   themeId: "[agent: insert the live theme's ID, gid://shopify/OnlineStoreTheme/…]",
   password: "[agent: insert the password in backticks, or delete this line if the storefront has none]",
   horizonVersion: "[agent: insert the Horizon version THEME.md covers]",
+  stockTheme: "[agent: insert the theme's name and version]",
 };
 
 /**
@@ -134,6 +147,7 @@ const PLACEHOLDER = {
  */
 export function fillTemplate(text: string, details: ProjectDetails): string {
   const { store, horizonVersion, devStore, liveTheme, storefrontPassword } = details;
+  const { editTheme } = details;
   const storeKind = devStore === undefined ? undefined : devStore ? "development store" : "live store";
   const password = storefrontPassword ? `\`${storefrontPassword}\`` : undefined;
   // Values go in through functions, so a "$" in a password isn't read as a replacement pattern
@@ -149,7 +163,8 @@ export function fillTemplate(text: string, details: ProjectDetails): string {
       line = put(line, PLACEHOLDER.themeId, liveTheme?.id);
       line = put(line, PLACEHOLDER.themeVersion, liveTheme?.version);
       line = put(line, PLACEHOLDER.password, password);
-      line = line.replaceAll(PLACEHOLDER.horizonVersion, () => horizonVersion);
+      line = put(line, PLACEHOLDER.stockTheme, editTheme?.stock);
+      if (horizonVersion) line = line.replaceAll(PLACEHOLDER.horizonVersion, () => horizonVersion);
       if (line.startsWith("- Store: ")) {
         line = put(line, /[a-z0-9][a-z0-9-]*\.myshopify\.com/, store);
         line = put(line, /(development|live) store/, storeKind);
@@ -159,11 +174,14 @@ export function fillTemplate(text: string, details: ProjectDetails): string {
         line = put(line, /Horizon \d+\.\d+\.\d+/, liveTheme?.version ? `Horizon ${liveTheme.version}` : undefined);
       }
       if (line.startsWith("- Storefront password")) line = put(line, /`[^`]*`/, password);
+      if (line.startsWith("- Theme to edit: ") && editTheme) {
+        line = `- Theme to edit: ${editTheme.name}${editTheme.stock ? ` (${editTheme.stock})` : ""}, ID ${editTheme.id}`;
+      }
       // The lines that name the Horizon version THEME.md covers
-      if (line.includes("technical spec of stock Horizon ")) {
+      if (horizonVersion && line.includes("technical spec of stock Horizon ")) {
         line = put(line, /stock Horizon \d+\.\d+\.\d+/, `stock Horizon ${horizonVersion}`);
       }
-      if (line.includes("`theme_version` ")) {
+      if (horizonVersion && line.includes("`theme_version` ")) {
         line = put(line, /`theme_version` \d+\.\d+\.\d+/, `\`theme_version\` ${horizonVersion}`);
       }
       return [line];
@@ -180,24 +198,45 @@ async function readIfExists(file: string): Promise<string | undefined> {
   }
 }
 
-// Where each project file comes from in the template
-const SOURCE: Record<TemplateFile, (version: string) => string> = {
-  "CLAUDE.md": () => "CLAUDE.md",
-  "THEME.md": (version) => `versions/${version}/THEME.md`,
-  "customizations.md": () => "customizations.md",
+// Where each project file comes from in the template; another theme's THEME.md starts blank
+const SOURCE: Record<ProjectKind, Record<TemplateFile, (version: string | undefined) => string | undefined>> = {
+  horizon: {
+    "CLAUDE.md": () => "CLAUDE.md",
+    "THEME.md": (version) => `versions/${version}/THEME.md`,
+    "customizations.md": () => "customizations.md",
+  },
+  other: {
+    "CLAUDE.md": () => "live-site/CLAUDE.md",
+    "THEME.md": () => undefined,
+    "customizations.md": () => "live-site/customizations.md",
+  },
 };
 
+/** Which theme a CLAUDE.md was written for, from the line describing THEME.md; undefined when it's neither template's. */
+export function claudeMdKind(text: string): ProjectKind | undefined {
+  if (text.includes("technical spec of stock Horizon")) return "horizon";
+  if (text.includes("technical spec of this store's theme")) return "other";
+  return undefined;
+}
+
 /**
- * Writes the template's docs for the project's Horizon version into dir. CLAUDE.md gets the store
- * filled in, and one that's already there keeps everything except those details. THEME.md is
- * replaced only when asked. customizations.md is the project's change log, so one that's already
- * there is always kept.
+ * Writes the template's docs for the project into dir. CLAUDE.md gets the store filled in, and one
+ * that's already there keeps everything except those details, unless it was written for the other
+ * kind of theme: then it's replaced. THEME.md is replaced only when asked. customizations.md is the
+ * project's change log, so one that's already there is always kept.
  */
 export async function writeProjectDocs(dir: string, input: ProjectDocsInput): Promise<ProjectDocsResult> {
+  const { kind } = input;
+  // A live-site project's CLAUDE.md always says "live store"
+  const details = kind === "other" ? { ...input.details, devStore: undefined } : input.details;
+  const version = details.horizonVersion;
+  if (kind === "horizon" && !version) throw new Error("A Horizon project needs its Horizon version");
   // Everything is downloaded before anything is written
-  const version = input.details.horizonVersion;
   const sources = await Promise.all(
-    TEMPLATE_FILES.map((name) => githubRaw(TEMPLATE_REPO, TEMPLATE_REF, SOURCE[name](version)))
+    TEMPLATE_FILES.map((name) => {
+      const source = SOURCE[kind][name](version);
+      return source === undefined ? "" : githubRaw(TEMPLATE_REPO, TEMPLATE_REF, source);
+    })
   );
   const template = new Map(TEMPLATE_FILES.map((name, i) => [name, sources[i]!]));
 
@@ -207,21 +246,24 @@ export async function writeProjectDocs(dir: string, input: ProjectDocsInput): Pr
     const file = path.join(dir, name);
     const current = await readIfExists(file);
     let next: string | undefined;
+    // A CLAUDE.md written for the other kind of theme is replaced, not updated
+    let updates = false;
     if (name === "CLAUDE.md") {
-      next = fillTemplate(current ?? template.get(name)!, input.details);
+      updates = current !== undefined && claudeMdKind(current) !== (kind === "horizon" ? "other" : "horizon");
+      next = fillTemplate(updates ? current! : template.get(name)!, details);
       placeholdersLeft = next.includes("[agent:");
     } else if (name === "THEME.md") {
-      // The version's spec is copied as it is
+      // The version's spec is copied as it is; another theme's starts blank
       if (current === undefined || input.replaceThemeMd) next = template.get(name)!;
     } else if (current === undefined) {
-      next = fillTemplate(template.get(name)!, input.details);
+      next = fillTemplate(template.get(name)!, details);
     }
 
     let action: DocAction;
     if (next === undefined) action = "kept";
     else if (current === undefined) action = "created";
     else if (next === current) action = "unchanged";
-    else action = name === "CLAUDE.md" ? "updated" : "replaced";
+    else action = updates ? "updated" : "replaced";
 
     if (next !== undefined && next !== current) await writeFile(file, next);
     files.push({ name, action });

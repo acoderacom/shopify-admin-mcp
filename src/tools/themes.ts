@@ -179,8 +179,20 @@ export function registerThemeTools(
   client: GraphQLClient,
   options: ServerOptions
 ) {
-  // With theme edits disabled, only the tools that read themes are registered
-  const server = options.disableThemeWrites ? readOnlyRegistrar(registrar) : registrar;
+  // With theme edits disabled, only the tools that read themes are registered; with themes locked,
+  // the tools that duplicate and delete whole themes are left out
+  const LOCKED_TOOLS = ["shopify_theme_duplicate", "shopify_theme_delete"];
+  const server: ToolRegistrar = options.disableThemeWrites
+    ? readOnlyRegistrar(registrar)
+    : options.lockThemes
+      ? {
+          registerTool(name, config, cb) {
+            const tool = registrar.registerTool(name, config, cb);
+            if (LOCKED_TOOLS.includes(name)) tool.remove();
+            return tool;
+          },
+        }
+      : registrar;
   server.registerTool(
     "shopify_themes_list",
     {

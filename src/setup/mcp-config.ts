@@ -36,6 +36,8 @@ export interface SetupAnswers {
   advanced?: AdvancedAnswers;
   /** Refuses every theme change; it also turns off live theme writes. */
   disableThemeWrites: boolean;
+  /** Keeps theme file edits but refuses creating, duplicating, renaming, deleting and publishing themes. */
+  lockThemes?: boolean;
 }
 
 interface ServerEntry {
@@ -91,7 +93,7 @@ const VALUE_FLAGS = [
   "--theme-dir",
   "--toolsets",
 ];
-const BOOLEAN_FLAGS = ["--read-only", "--allow-live-theme-writes", "--disable-theme-writes", "--disable-raw-graphql"];
+const BOOLEAN_FLAGS = ["--read-only", "--allow-live-theme-writes", "--disable-theme-writes", "--lock-themes", "--disable-raw-graphql"];
 
 const ENV = {
   store: "SHOPIFY_STORE",
@@ -105,6 +107,7 @@ const ENV = {
   toolsets: "SHOPIFY_TOOLSETS",
   disableRawGraphql: "SHOPIFY_DISABLE_RAW_GRAPHQL",
   disableThemeWrites: "SHOPIFY_DISABLE_THEME_WRITES",
+  lockThemes: "SHOPIFY_LOCK_THEMES",
 } as const;
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -239,6 +242,7 @@ function buildEnv(
   setFlag(ENV.readOnly, advanced.readOnly);
   setFlag(ENV.allowLiveThemeWrites, advanced.allowLiveThemeWrites && !answers.disableThemeWrites);
   setFlag(ENV.disableThemeWrites, answers.disableThemeWrites);
+  setFlag(ENV.lockThemes, Boolean(answers.lockThemes));
   set(ENV.uploadDir, advanced.uploadDir);
   set(ENV.themeDir, advanced.themeDir);
   set(ENV.toolsets, advanced.toolsets?.join(","));

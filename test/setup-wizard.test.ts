@@ -582,54 +582,104 @@ describe("setup wizard: Horizon project", () => {
     [
       "older than the template",
       { ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.1.3" } },
-      'The live theme "Horizon" is Horizon 4.1.3, older than the template\'s Horizon 4.2.0. Switch the store to Horizon 4.2.0, then run setup again.',
+      'The live theme "Horizon" is Horizon 4.1.3, older than the template\'s Horizon 4.2.0. Switch the store to Horizon 4.2.0.',
     ],
     [
       "newer than the template",
       { ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.3.0" } },
-      "is Horizon 4.3.0, newer than the template's Horizon 4.2.0. Switch the store to Horizon 4.2.0, or wait until the template supports 4.3.0, then run setup again.",
+      "is Horizon 4.3.0, newer than the template's Horizon 4.2.0. Switch the store to Horizon 4.2.0, or cancel and run setup again once the template supports 4.3.0.",
     ],
     [
       "not Horizon",
       { ...CONNECTED, liveTheme: { id: "gid://shopify/OnlineStoreTheme/9", name: "Dawn", themeName: "Dawn", version: "15.0.0" } },
-      'The live theme "Dawn" isn\'t Horizon. Switch the store to Horizon 4.2.0, then run setup again.',
+      'The live theme "Dawn" isn\'t Horizon. Switch the store to Horizon 4.2.0.',
     ],
-  ] as const)("stops when the live theme is %s, offering an upload-ready zip", async (_case, result, notice) => {
-    const wizard = setup({ verify: async () => result });
-    const { outcome, recent, waitFor, press, save, downloadHorizon, saveHorizonZip } = wizard;
+  ] as const)(
+    "waits when the live theme is %s, saving an upload-ready zip, and goes on with the same answers once it's switched",
+    async (_case, result, notice) => {
+      const verify = vi.fn<WizardOptions["verify"]>().mockResolvedValueOnce(result).mockResolvedValue(CONNECTED);
+      const wizard = setup({ verify });
+      const { outcome, all, recent, waitFor, press, save, downloadHorizon, saveHorizonZip } = wizard;
+
+      await toTheme(wizard);
+      await waitFor(notice);
+      await waitFor("What next?");
+      expect(saveHorizonZip).toHaveBeenCalledWith(HORIZON_420);
+      expect(recent()).toContain(`Saved ${path.join(cwd, "horizon-4.2.0.zip")}`);
+      expect(recent()).toContain(
+        "The Shopify theme store only installs the newest Horizon. To put Horizon 4.2.0 on the store, upload horizon-4.2.0.zip in the Shopify admin (Online Store → Themes → Add theme → Upload zip file) and publish it. Setup waits here and keeps your answers."
+      );
+      expect(recent()).toContain("Check the live theme again (once Horizon 4.2.0 is published)");
+      expect(recent()).not.toContain("Try saving");
+      expect(save).not.toHaveBeenCalled();
+
+      await press(ENTER);
+      await waitFor("Save .mcp.json?");
+      expect(recent()).toContain('The live theme "Horizon" is Horizon 4.2.0, which matches the template.');
+      // Nothing is asked again: the store and credentials from before are checked
+      expect(verify).toHaveBeenCalledTimes(2);
+      expect(verify.mock.calls[1]).toEqual(verify.mock.calls[0]);
+      expect(all()).not.toContain("Setup stopped");
+      await press(ENTER);
+
+      await expect(outcome).resolves.toBe("saved");
+      expect(saveHorizonZip).toHaveBeenCalledTimes(1);
+      expect(downloadHorizon).toHaveBeenCalledWith(HORIZON_420);
+      expect(savedAnswers(save)).toMatchObject({ store: "mystore.myshopify.com", auth: { mode: "access-token", accessToken: "shpat_x" } });
+    }
+  );
+
+  it("keeps waiting while the live theme still doesn't match, without saving the zip twice, until cancelled", async () => {
+    const older = { ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.1.3" } };
+    const wizard = setup({ verify: async () => older });
+    const { outcome, recent, waitFor, press, save, saveHorizonZip } = wizard;
 
     await toTheme(wizard);
-    await waitFor(notice);
-    await waitFor("Save horizon-4.2.0.zip in this folder to upload?");
-    expect(recent()).toContain(
-      "The Shopify theme store only installs the newest Horizon. To put Horizon 4.2.0 on the store, upload it in the Shopify admin (Online Store → Themes → Add theme → Upload zip file) and publish it."
-    );
+    await waitFor("What next?");
     await press(ENTER);
+    await waitFor("is Horizon 4.1.3, older than the template's Horizon 4.2.0");
+    await waitFor("What next?");
+    expect(recent()).not.toContain("Saved ");
+    expect(saveHorizonZip).toHaveBeenCalledTimes(1);
+    await press(DOWN, ENTER);
 
-    await expect(outcome).resolves.toBe("stopped");
-    expect(saveHorizonZip).toHaveBeenCalledWith(HORIZON_420);
-    expect(recent()).toContain(`Saved ${path.join(cwd, "horizon-4.2.0.zip")}`);
-    expect(recent()).toContain("Setup stopped. .mcp.json wasn't changed.");
+    await expect(outcome).resolves.toBe("cancelled");
     expect(save).not.toHaveBeenCalled();
-    expect(downloadHorizon).not.toHaveBeenCalled();
   });
 
-  it("saves no zip when that's declined, and reports a failed zip", async () => {
+  it("offers to save the zip again when that fails, and keeps waiting after a failed check", async () => {
     const older = { ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.1.3" } };
+    const verify = vi
+      .fn<WizardOptions["verify"]>()
+      .mockResolvedValueOnce(older)
+      .mockResolvedValueOnce({ ok: false, message: "fetch failed" })
+      .mockResolvedValue(CONNECTED);
+    const saveHorizonZip = vi
+      .fn<WizardOptions["saveHorizonZip"]>()
+      .mockRejectedValueOnce(new Error("GitHub returned 500"))
+      .mockResolvedValue(path.join(cwd, "horizon-4.2.0.zip"));
+    const wizard = setup({ verify, saveHorizonZip });
+    const { outcome, recent, waitFor, press } = wizard;
 
-    const declined = setup({ verify: async () => older });
-    await toTheme(declined);
-    await declined.waitFor("Save horizon-4.2.0.zip in this folder to upload?");
-    await declined.press("n");
-    await expect(declined.outcome).resolves.toBe("stopped");
-    expect(declined.saveHorizonZip).not.toHaveBeenCalled();
+    await toTheme(wizard);
+    await waitFor("What next?");
+    expect(recent()).toContain("Couldn't save the zip: GitHub returned 500");
+    expect(recent()).toContain("Try saving horizon-4.2.0.zip again");
+    await press(DOWN, ENTER);
+    await waitFor("What next?");
+    expect(recent()).toContain(`Saved ${path.join(cwd, "horizon-4.2.0.zip")}`);
+    // The answer above stays on screen; the new prompt no longer offers it
+    expect(recent().slice(recent().lastIndexOf("What next?"))).not.toContain("Try saving");
 
-    const failing = setup({ verify: async () => older, saveHorizonZip: async () => Promise.reject(new Error("GitHub returned 500")) });
-    await toTheme(failing);
-    await failing.waitFor("Save horizon-4.2.0.zip in this folder to upload?");
-    await failing.press(ENTER);
-    await expect(failing.outcome).resolves.toBe("stopped");
-    expect(failing.recent()).toContain("Couldn't save the zip: GitHub returned 500");
+    await press(ENTER);
+    await waitFor("What next?");
+    expect(recent()).toContain("Couldn't connect: fetch failed");
+    await press(ENTER);
+    await waitFor("Save .mcp.json?");
+    await press(ENTER);
+
+    await expect(outcome).resolves.toBe("saved");
+    expect(verify).toHaveBeenCalledTimes(3);
   });
 
   it("stops when the live theme can't be read, without a zip", async () => {

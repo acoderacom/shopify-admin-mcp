@@ -1,5 +1,11 @@
 # @acodera/shopify-admin-mcp
 
+## 1.12.0
+
+### Minor Changes
+
+- [#46](https://github.com/acoderacom/shopify-admin-mcp/pull/46) [`12b177c`](https://github.com/acoderacom/shopify-admin-mcp/commit/12b177c6b16fbcb5b409f5c6cde06d32c271e828) Thanks [@acoderacom](https://github.com/acoderacom)! - Setup's "Full theme design with Horizon" mode no longer stops when the live theme isn't the template's Horizon version. It saves the upload-ready `horizon-<version>.zip` straight away and waits while you upload and publish it, then checks the live theme again with the store and credentials you already entered, so you don't start over.
+
 ## 1.11.0
 
 ### Minor Changes

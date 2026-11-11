@@ -1,5 +1,11 @@
 # @acodera/shopify-admin-mcp
 
+## 1.13.0
+
+### Minor Changes
+
+- [#48](https://github.com/acoderacom/shopify-admin-mcp/pull/48) [`bb61786`](https://github.com/acoderacom/shopify-admin-mcp/commit/bb6178638b8039a2a35ff7082d55d742402c6cfe) Thanks [@acoderacom](https://github.com/acoderacom)! - Setup's "Full theme design with Horizon" now starts by listing the Horizon versions the template supports, newest first with the recommended one marked, and asks which one the project uses. The store's live theme must be that version; otherwise setup saves its zip and waits as before, and says when the live theme is another supported version that could be chosen instead. A Horizon live theme whose version can't be read now waits for the switch too, instead of stopping setup. A folder set up before starts on its own version.
+
 ## 1.12.0
 
 ### Minor Changes

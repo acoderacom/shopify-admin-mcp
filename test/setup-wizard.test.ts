@@ -160,9 +160,14 @@ async function toOther({ waitFor, press }: Wizard, { preselected = false, fromTh
 // Full theme development (already the default in a folder with a theme), then the store and access token
 const waitForMode = ({ waitFor }: Wizard) => waitFor(MODE_QUESTION);
 
-async function toTheme({ waitFor, press }: Wizard, { preselected = false } = {}) {
+const VERSION_QUESTION = "Which Horizon version will this project use?";
+
+// Then the Horizon version (Enter keeps the highlighted one)
+async function toTheme({ waitFor, press }: Wizard, { preselected = false, version = [ENTER] }: { preselected?: boolean; version?: string[] } = {}) {
   await waitFor(MODE_QUESTION);
   await press(...(preselected ? [ENTER] : [DOWN, ENTER]));
+  await waitFor(VERSION_QUESTION);
+  await press(...version);
   await waitFor("Store domain");
   await press("mystore", ENTER);
   await waitFor("How does the app authenticate?");
@@ -507,17 +512,16 @@ describe("setup wizard", () => {
 });
 
 describe("setup wizard: Horizon project", () => {
-  it("sets up the theme and docs when the live theme matches the template, with the settings CLAUDE.md needs", async () => {
+  it("sets up the theme and docs when the live theme is the chosen version, with the settings CLAUDE.md needs", async () => {
     const verify = vi.fn<WizardOptions["verify"]>(async () => ({ ...CONNECTED, passwordProtected: true }));
     const wizard = setup({ verify });
     const { outcome, all, recent, waitFor, press, save, downloadHorizon, writeProjectDocs } = wizard;
 
     await toTheme(wizard);
     await waitFor("The storefront has a password");
-    expect(all()).toContain("Template: Horizon 4.2.0 (acoderacom/claude-horizon)");
-    expect(recent()).toContain('The live theme "Horizon" is Horizon 4.2.0, which matches the template.');
-    // The live theme decides the version, so there's nothing to choose
-    expect(all()).not.toContain("Which Horizon version?");
+    expect(all()).toContain("Found 1 supported Horizon version in acoderacom/claude-horizon");
+    expect(all()).toContain("Horizon 4.2.0 (recommended)");
+    expect(recent()).toContain('The live theme "Horizon" is Horizon 4.2.0, the version you chose.');
     await press("123", ENTER);
     await waitFor("Save .mcp.json?");
     expect(recent()).toContain("so those are switched on");
@@ -561,16 +565,30 @@ describe("setup wizard: Horizon project", () => {
     expect(recent()).toContain("Project docs for Horizon 4.2.0: CLAUDE.md created, THEME.md created, customizations.md created");
   });
 
-  it("accepts any supported version, using that version's theme and docs", async () => {
+  it("asks first which supported version to use, newest first, and uses that version's theme and docs", async () => {
     const verify = vi.fn<WizardOptions["verify"]>(async () => ({ ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.1.5" } }));
     const index: TemplateIndex = { current: HORIZON_420, supported: [HORIZON_420, HORIZON_415] };
     const wizard = setup({ verify, loadTemplateIndex: async () => index });
     const { outcome, all, recent, waitFor, press, downloadHorizon, writeProjectDocs } = wizard;
 
-    await toTheme(wizard);
+    await waitFor(MODE_QUESTION);
+    await press(DOWN, ENTER);
+    await waitFor(VERSION_QUESTION);
+    expect(all()).toContain("Found 2 supported Horizon versions in acoderacom/claude-horizon");
+    // Before any store question, with the current version highlighted
+    expect(all()).not.toContain("Store domain");
+    expect(recent()).toMatch(/● Horizon 4\.2\.0 \(recommended\)[\s\S]*Horizon 4\.1\.5/);
+    await press(DOWN, ENTER);
+    await waitFor("Store domain");
+    await press("mystore", ENTER);
+    await waitFor("How does the app authenticate?");
+    await press(ENTER);
+    await waitFor("Admin API access token");
+    await press("shpat_x", ENTER);
     await waitFor("Save .mcp.json?");
-    expect(all()).toContain("Template: Horizon 4.2.0 (current), 4.1.5 (acoderacom/claude-horizon)");
-    expect(recent()).toContain("is Horizon 4.1.5, which matches the template.");
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(recent()).toContain("is Horizon 4.1.5, the version you chose.");
+    expect(all()).toContain("Horizon project: Horizon 4.1.5 in ./theme, with its THEME.md");
     await press(ENTER);
 
     await expect(outcome).resolves.toBe("saved");
@@ -578,16 +596,53 @@ describe("setup wizard: Horizon project", () => {
     expect(writeProjectDocs.mock.calls[0]![0].details.horizonVersion).toBe("4.1.5");
   });
 
+  it("waits for the chosen version even when the live theme is another supported one, saying it could be chosen instead", async () => {
+    const verify = vi.fn<WizardOptions["verify"]>(async () => ({ ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.1.5" } }));
+    const index: TemplateIndex = { current: HORIZON_420, supported: [HORIZON_420, HORIZON_415] };
+    const wizard = setup({ verify, loadTemplateIndex: async () => index });
+    const { outcome, waitFor, press, save, saveHorizonZip } = wizard;
+
+    await toTheme(wizard);
+    await waitFor(
+      'The live theme "Horizon" is Horizon 4.1.5, older than Horizon 4.2.0, the version you chose. Switch the store to Horizon 4.2.0, or cancel and run setup again choosing Horizon 4.1.5.'
+    );
+    await waitFor("What next?");
+    expect(saveHorizonZip).toHaveBeenCalledWith(HORIZON_420);
+    await press(DOWN, ENTER);
+
+    await expect(outcome).resolves.toBe("cancelled");
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("starts on the version a folder was set up with", async () => {
+    await writeFile(path.join(cwd, "CLAUDE.md"), "- `THEME.md`: technical spec of stock Horizon 4.1.5 for agents.\n");
+    const index: TemplateIndex = { current: HORIZON_420, supported: [HORIZON_420, HORIZON_415] };
+    const wizard = setup({ loadTemplateIndex: async () => index });
+
+    await wizard.waitFor(MODE_QUESTION);
+    await wizard.press(DOWN, ENTER);
+    await wizard.waitFor(VERSION_QUESTION);
+    expect(wizard.recent()).toContain("● Horizon 4.1.5");
+    await wizard.press("\u0003");
+
+    await expect(wizard.outcome).resolves.toBe("cancelled");
+  });
+
   it.each([
     [
-      "older than the template",
+      "older than the chosen version",
       { ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.1.3" } },
-      'The live theme "Horizon" is Horizon 4.1.3, older than the template\'s Horizon 4.2.0. Switch the store to Horizon 4.2.0.',
+      'The live theme "Horizon" is Horizon 4.1.3, older than Horizon 4.2.0, the version you chose. Switch the store to Horizon 4.2.0.',
     ],
     [
-      "newer than the template",
+      "newer than the chosen version",
       { ...CONNECTED, liveTheme: { ...LIVE_THEME, version: "4.3.0" } },
-      "is Horizon 4.3.0, newer than the template's Horizon 4.2.0. Switch the store to Horizon 4.2.0, or cancel and run setup again once the template supports 4.3.0.",
+      "is Horizon 4.3.0, newer than Horizon 4.2.0, the version you chose. Switch the store to Horizon 4.2.0, or cancel and run setup again once the template supports 4.3.0.",
+    ],
+    [
+      "Horizon with a version that can't be read",
+      { ...CONNECTED, liveTheme: { ...LIVE_THEME, version: undefined } },
+      'The live theme "Horizon" is Horizon, but its version couldn\'t be read. Switch the store to Horizon 4.2.0.',
     ],
     [
       "not Horizon",
@@ -615,7 +670,7 @@ describe("setup wizard: Horizon project", () => {
 
       await press(ENTER);
       await waitFor("Save .mcp.json?");
-      expect(recent()).toContain('The live theme "Horizon" is Horizon 4.2.0, which matches the template.');
+      expect(recent()).toContain('The live theme "Horizon" is Horizon 4.2.0, the version you chose.');
       // Nothing is asked again: the store and credentials from before are checked
       expect(verify).toHaveBeenCalledTimes(2);
       expect(verify.mock.calls[1]).toEqual(verify.mock.calls[0]);
@@ -637,7 +692,7 @@ describe("setup wizard: Horizon project", () => {
     await toTheme(wizard);
     await waitFor("What next?");
     await press(ENTER);
-    await waitFor("is Horizon 4.1.3, older than the template's Horizon 4.2.0");
+    await waitFor("is Horizon 4.1.3, older than Horizon 4.2.0, the version you chose");
     await waitFor("What next?");
     expect(recent()).not.toContain("Saved ");
     expect(saveHorizonZip).toHaveBeenCalledTimes(1);
@@ -822,7 +877,7 @@ describe("setup wizard: Horizon project", () => {
       expect(recent()).toContain("● theme-copy-1: Dawn 15.4.0, unpublished");
       // No Horizon template or version check
       expect(loadTemplateIndex).not.toHaveBeenCalled();
-      expect(all()).not.toContain("Template: Horizon");
+      expect(all()).not.toContain(VERSION_QUESTION);
       await press(ENTER);
       await waitFor("The storefront has a password");
       await press("123", ENTER);
@@ -998,6 +1053,8 @@ describe("setup wizard: Horizon project", () => {
       await waitForMode(wizard);
       // From a live site, the default here, up to Horizon
       await wizard.press(UP, ENTER);
+      await wizard.waitFor(VERSION_QUESTION);
+      await wizard.press(ENTER);
       await wizard.waitFor("Store domain");
       await wizard.press("mystore", ENTER);
       await wizard.waitFor("How does the app authenticate?");
